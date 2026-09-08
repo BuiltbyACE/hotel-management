@@ -34,9 +34,16 @@ export type HandlerFn = (
 ) => Promise<Response>;
 
 /**
+ * What route modules export. Single-param so the result is assignable to
+ * Next's RouteHandlerConfig (`(request: NextRequest, context) => Response`);
+ * the wrapped fn still receives the enriched HandlerContext internally.
+ */
+export type ApiHandler = (req: Request) => Promise<Response>;
+
+/**
  * Wrap a route handler with cross-cutting concerns.
  */
-export function apiHandler(fn: HandlerFn): HandlerFn {
+export function apiHandler(fn: HandlerFn): ApiHandler {
   return async (req: Request) => {
     const requestId = randomUUID();
     const logger = createLogger(requestId);

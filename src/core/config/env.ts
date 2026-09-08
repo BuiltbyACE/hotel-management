@@ -46,8 +46,11 @@ const EnvSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 }).refine(
   (data) => {
-    // In production, SENTRY_DSN and RESEND_API_KEY are required
-    if (data.NODE_ENV === 'production') {
+    // In production, SENTRY_DSN and RESEND_API_KEY are required.
+    // `next build` sets NODE_ENV=production too, so exempt the compile phase
+    // (NEXT_PHASE='phase-production-build') — these are runtime-only concerns.
+    const isBuild = process.env.NEXT_PHASE === 'phase-production-build';
+    if (data.NODE_ENV === 'production' && !isBuild) {
       return !!data.SENTRY_DSN && !!data.RESEND_API_KEY;
     }
     return true;
