@@ -145,6 +145,9 @@ const eslintConfig = defineConfig([
         { category: 'validation', pattern: 'src/modules/*/validation*' },
         { category: 'events', pattern: 'src/modules/*/events*' },
         { category: 'types', pattern: 'src/modules/*/types*' },
+        { category: 'guards', pattern: 'src/modules/*/auth-guard*' },
+        // The one file where core is allowed to import module schemas.
+        { category: 'schemaBarrel', pattern: 'src/core/db/schema.ts' },
       ],
       'import/resolver': {
         typescript: { alwaysTryTypes: true },
@@ -196,6 +199,12 @@ const eslintConfig = defineConfig([
             from: { element: { type: 'core' } },
             disallow: { to: { element: { types: { anyOf: ['module', 'components', 'hooks', 'app', 'route'] } } } },
           },
+          // EXCEPTION (last-match-wins): the app-side schema barrel. core/db/schema.ts
+          // is the ONE place core aggregates module schemas so drizzle has a typed map.
+          {
+            from: { element: { type: 'core' }, file: { categories: ['schemaBarrel'] } },
+            allow: { to: { element: { type: 'module' }, file: { categories: ['schema'] } } },
+          },
 
           // app pages (server components) may import core, module services, components, hooks, lib.
           // Broad ban first, specific allows after (last-match-wins).
@@ -232,7 +241,18 @@ const eslintConfig = defineConfig([
             allow: {
               to: {
                 element: { type: 'module' },
-                file: { categories: ['service', 'validation'] },
+                file: { categories: ['service', 'validation', 'guards'] },
+              },
+            },
+          },
+
+          // Tests living next to a route (src/app/api/**/__tests__) may touch
+          // anything — same latitude as module tests.
+          {
+            from: { element: { type: 'route' }, file: { categories: ['test'] } },
+            allow: {
+              to: {
+                element: { types: { anyOf: ['module', 'app', 'components', 'hooks', 'lib'] } },
               },
             },
           },
@@ -246,7 +266,7 @@ const eslintConfig = defineConfig([
           {
             from: { element: { type: 'module' } },
             allow: {
-              to: { element: { type: 'module' }, file: { categories: ['service', 'events'] } },
+              to: { element: { type: 'module' }, file: { categories: ['service', 'events', 'guards'] } },
             },
           },
 
