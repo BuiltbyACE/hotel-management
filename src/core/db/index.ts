@@ -23,6 +23,15 @@ export async function withDb<T>(fn: (db: Db) => Promise<T>): Promise<T> {
 }
 
 /**
+ * Escape hatch for libraries that need a full Drizzle instance (e.g. the
+ * Better Auth adapter). The pool is still never exported; callers get the
+ * scoped Drizzle client.
+ */
+export function getDb(): Db {
+  return _db;
+}
+
+/**
  * Transactional access. Everything that writes MUST use this.
  * If the callback throws, the transaction is rolled back automatically.
  */
@@ -51,9 +60,13 @@ function bigintHash(str: string): bigint {
   hash = 0n;
   for (let i = 0; i < str.length; i++) {
     hash = ((hash << 5n) - hash) + BigInt(str.charCodeAt(i));
-    hash = hash & 0xffffffffffffffffn;
+    // Mask to a signed 63-bit non-negative value so the driver binds it as
+    // int8 (values with the top bit set would exceed the int8 range and be
+    // coerced to numeric, breaking pg_advisory_xact_lock(bigint) resolution).
+    hash = hash & 0x7fffffffffffffffn;
   }
   return hash;
 }
 
 export { schema };
+export { runAsMigrator, closeMigratorPool } from './asMigrator';

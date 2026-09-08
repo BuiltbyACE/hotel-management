@@ -13,6 +13,7 @@
     "test:watch": "dotenv -e .env.local -- vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "dotenv -e .env.local -- tsx scripts/migrate.ts",
+    "db:verify": "dotenv -e .env.local -- tsx scripts/verify-schema.ts",
     "db:studio": "drizzle-kit studio",
     "ci": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },

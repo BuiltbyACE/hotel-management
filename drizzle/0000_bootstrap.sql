@@ -56,34 +56,19 @@ ALTER DEFAULT PRIVILEGES FOR ROLE hms_migrator IN SCHEMA public GRANT ALL PRIVIL
 
 -- ---------------------------------------------------------------------------
 -- 4. new_id(): UUIDv7 (time-ordered, index-friendly, unguessable-ish)
+--    PostgreSQL 18 provides uuidv7() natively. The hand-rolled plpgsql version
+--    was REMOVED because to_hex() drops leading zeroes for bytes < 16, which
+--    produced short, invalid UUIDs at random. Native uuidv7() is authoritative.
+--    (On PG16/17: CREATE OR REPLACE FUNCTION new_id() RETURNS uuid AS $fn$
+--      SELECT gen_random_uuid(); $fn$ LANGUAGE sql VOLATILE)
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.new_id()
 RETURNS uuid
-LANGUAGE plpgsql
+LANGUAGE sql
 VOLATILE
 SET search_path = public
 AS $fn$
-DECLARE
-  ms bigint;
-  rb bytea;
-  hex text;
-BEGIN
-  ms := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint;
-  rb := gen_random_bytes(10);
-  -- 6 bytes timestamp (48-bit, big-endian)
-  hex := lpad(to_hex(ms), 12, '0');
-  -- byte 6: version = 0111 (v7), low nibble random
-  hex := hex || to_hex(((get_byte(rb, 0) & 15) + 112));
-  -- byte 7: random
-  hex := hex || to_hex(get_byte(rb, 1));
-  -- byte 8: variant = 10xx, low 6 bits random
-  hex := hex || to_hex(((get_byte(rb, 2) & 63) + 128));
-  -- bytes 9..15: random
-  FOR i IN 3..9 LOOP
-    hex := hex || to_hex(get_byte(rb, i));
-  END LOOP;
-  RETURN hex::uuid;
-END;
+  SELECT uuidv7();
 $fn$;
 --> statement-breakpoint
 
