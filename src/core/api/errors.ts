@@ -29,17 +29,20 @@ export class AppError {
   readonly code: ErrorCode;
   readonly detail: string;
   readonly errors?: Record<string, string[]>;
+  readonly retryAfterSeconds?: number;
 
   private constructor(
     status: number,
     code: ErrorCode,
     detail: string,
     errors?: Record<string, string[]>,
+    retryAfterSeconds?: number,
   ) {
     this.status = status;
     this.code = code;
     this.detail = detail;
     this.errors = errors;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 
   static unauthorized(detail = 'Authentication required'): AppError {
@@ -70,8 +73,8 @@ export class AppError {
     return new AppError(409, code, detail);
   }
 
-  static tooMany(detail = 'Rate limit exceeded'): AppError {
-    return new AppError(429, 'RATE_LIMITED', detail);
+  static tooMany(detail = 'Rate limit exceeded', retryAfterSeconds?: number): AppError {
+    return new AppError(429, 'RATE_LIMITED', detail, undefined, retryAfterSeconds);
   }
 
   static internal(cause?: unknown): AppError {

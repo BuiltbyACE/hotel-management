@@ -4,11 +4,13 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
+import { AppError, problemResponse } from '@/core/api';
 import { withDb } from '@/core/db';
 import { rateLimitAttempts } from '@/core/db/infra';
 import {
   checkLimit,
   countAttempts,
+  enforceRateLimit,
   purgeRateLimits,
   recordAttempt,
   type RateLimitBucket,
@@ -64,5 +66,48 @@ describe('rate-limit (DB-backed)', () => {
     await withDb((db) =>
       db.delete(rateLimitAttempts).where(and(eq(rateLimitAttempts.bucket, bucket), eq(rateLimitAttempts.bucket, oldBucket))),
     );
+  });
+});
+
+describe('enforceRateLimit (§20.4 scoped buckets)', () => {
+  const reportBucket: RateLimitBucket = `report:it-${crypto.randomUUID()}`;
+  const exportBucket: RateLimitBucket = `export:it-${crypto.randomUUID()}`;
+
+  afterEach(async () => {
+    await withDb((db) =>
+      db.delete(rateLimitAttempts).where(
+        and(eq(rateLimitAttempts.bucket, reportBucket), eq(rateLimitAttempts.bucket, exportBucket)),
+      ),
+    );
+  });
+
+  it('allows exactly 20 report calls per minute, then 429s with Retry-After', async () => {
+    for (let i = 0; i < 20; i++) {
+      await enforceRateLimit(reportBucket, { max: 20, windowSeconds: 60 });
+    }
+
+    let denied: AppError | undefined;
+    try {
+      await enforceRateLimit(reportBucket, { max: 20, windowSeconds: 60 });
+    } catch (err) {
+      denied = err as AppError;
+    }
+    expect(denied).toBeDefined();
+    expect(denied?.status).toBe(429);
+    expect(denied?.code).toBe('RATE_LIMITED');
+    expect(denied?.retryAfterSeconds).toBeGreaterThan(0);
+
+    const response = problemResponse(denied!);
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe(String(denied?.retryAfterSeconds));
+  });
+
+  it('allows exactly 5 export calls per hour', async () => {
+    for (let i = 0; i < 5; i++) {
+      await enforceRateLimit(exportBucket, { max: 5, windowSeconds: 3600 });
+    }
+    await expect(
+      enforceRateLimit(exportBucket, { max: 5, windowSeconds: 3600 }),
+    ).rejects.toMatchObject({ status: 429, code: 'RATE_LIMITED' });
   });
 });

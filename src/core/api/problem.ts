@@ -43,6 +43,7 @@ export function problemResponse(
     headers: {
       'Content-Type': 'application/problem+json',
       ...(opts.requestId && { 'X-Request-Id': opts.requestId }),
+      ...(error.retryAfterSeconds !== undefined && { 'Retry-After': String(error.retryAfterSeconds) }),
     },
   });
 }

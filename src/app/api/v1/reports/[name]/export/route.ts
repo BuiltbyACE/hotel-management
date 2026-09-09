@@ -2,18 +2,23 @@
  * GET /api/v1/reports/{name}/export?format=xlsx|csv&from=&to=&... → reports.export
  * Queues an async export; the worker renders and stores it, the user is
  * notified, and downloads via /v1/reports/exports/{fileId}/url (§18.3).
- * Never synchronous — 202 with { jobId }.
+ * Never synchronous — 202 with { jobId }. Rate-limited to 5/hr per user
+ * (bucket export:<userId>, §20.4).
  */
 import { apiHandler, validateQuery } from '@/core/api';
 import { AppError } from '@/core/api/errors';
 import { withTx } from '@/core/db';
 import { enqueue } from '@/core/jobs';
+import { enforceRateLimit } from '@/core/rate-limit';
 import { requirePermission } from '@/modules/identity/auth-guard';
 import {
   exportPropertyId,
   schemaForExport,
   validateExportName,
 } from '@/modules/reporting/service';
+
+const EXPORT_MAX = 5;
+const EXPORT_WINDOW_SECONDS = 60 * 60;
 
 function nameFromUrl(url: string): string {
   const parts = new URL(url).pathname.split('/');
@@ -24,6 +29,7 @@ function nameFromUrl(url: string): string {
 
 export const GET = apiHandler(async (req) => {
   const actor = await requirePermission(req, 'reports.export');
+  await enforceRateLimit(`export:${actor.id}`, { max: EXPORT_MAX, windowSeconds: EXPORT_WINDOW_SECONDS });
   const name = validateExportName(nameFromUrl(req.url));
   const url = new URL(req.url);
   const format = url.searchParams.get('format');

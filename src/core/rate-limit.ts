@@ -9,8 +9,10 @@
  * `report:<userId>`, `export:<userId>`. Swept hourly by purge-rate-limits.
  */
 import { and, count, eq, gte, lt } from 'drizzle-orm';
+import { AppError } from '@/core/api/errors';
 import { rateLimitAttempts } from './db/infra';
 import type { Db, Tx } from './db/index';
+import { withDb } from './db/index';
 
 export type RateLimitBucket =
   | `login:${string}`
@@ -94,6 +96,25 @@ export function checkLimitTx(
   opts: { max: number; windowSeconds: number; at?: Date },
 ): Promise<RateLimitDecision> {
   return checkLimit(tx as unknown as Db, bucket, opts);
+}
+
+/**
+ * Enforce a throttle in one turn: check the window, then record the attempt.
+ * The check happens BEFORE the write so exactly `max` requests per window
+ * succeed (check-then-record). On denial, throws a 429 AppError that carries
+ * Retry-After (serialised by problemResponse).
+ */
+export async function enforceRateLimit(
+  bucket: RateLimitBucket,
+  opts: { max: number; windowSeconds: number; at?: Date },
+): Promise<void> {
+  await withDb(async (db) => {
+    const decision = await checkLimit(db, bucket, opts);
+    if (!decision.allowed) {
+      throw AppError.tooMany('Rate limit exceeded. Try again later.', decision.retryAfterSeconds);
+    }
+    await recordAttempt(db, bucket);
+  });
 }
 
 /**
