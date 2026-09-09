@@ -103,7 +103,7 @@ export async function findGuestById(db: Db, id: string): Promise<GuestRecord | n
 
 /** Dedupe on identity document: case-insensitive id_number within a property. */
 export async function findGuestByIdNumber(
-  db: Db,
+  db: Db | Tx,
   propertyId: string,
   idType: IdDocumentType,
   idNumber: string,
@@ -119,7 +119,7 @@ export async function findGuestByIdNumber(
 }
 
 /** Dedupe on phone (exact match, property-scoped), returning the newest first. */
-export async function findGuestByPhone(db: Db, propertyId: string, phone: string): Promise<GuestRecord | null> {
+export async function findGuestByPhone(db: Db | Tx, propertyId: string, phone: string): Promise<GuestRecord | null> {
   const rows = await db
     .select(GUEST_COLUMNS)
     .from(guests)

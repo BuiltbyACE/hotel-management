@@ -13,7 +13,7 @@
  * - documents reference file metadata in core/files; viewing goes through a
  *   short-lived presigned URL (guests.view_documents)
  */
-import { withDb, withTx } from '@/core/db';
+import { withDb, withTx, type Tx } from '@/core/db';
 import { AppError } from '@/core/api';
 import { eventBus } from '@/core/events';
 import { getFileRecord, getStorage } from '@/core/files';
@@ -39,7 +39,7 @@ import {
   type GuestDocumentRecord,
 } from './repository';
 import { GUEST_EVENTS } from './events';
-import type { GuestDocumentView, GuestView } from './types';
+import type { GuestDocumentView, GuestView, IdDocumentType } from './types';
 import type {
   CreateGuestInput,
   MergeGuestsInput,
@@ -216,6 +216,46 @@ export async function deleteGuest(id: string, actor: Actor): Promise<void> {
   await withTx(async (tx) => {
     await softDeleteGuest(tx, id);
     await eventBus.emit(GUEST_EVENTS.guestDeleted, { id, fullName: target.fullName, by: actor.email });
+  });
+}
+
+/**
+ * Resolve a guest for a booking inside the caller's transaction (blueprint
+ * §11.2 step 2): dedupe on ID document first, then phone, else create.
+ * Never opens its own transaction — `tx` is the booking transaction, so a
+ * blacklisted-guest rejection rolls the booking back too.
+ */
+export async function resolveOrCreate(
+  tx: Tx,
+  propertyId: string,
+  input: {
+    fullName: string;
+    phone?: string | null;
+    email?: string | null;
+    idType?: string | null;
+    idNumber?: string | null;
+  },
+  actor: Pick<Actor, 'id'>,
+): Promise<GuestRecord> {
+  if (input.idType && input.idNumber) {
+    const idType = input.idType as IdDocumentType;
+    const idNumber = input.idNumber;
+    const sameId = await findGuestByIdNumber(tx, propertyId, idType, idNumber);
+    if (sameId) return sameId;
+  }
+  if (input.phone) {
+    const phone = input.phone;
+    const samePhone = await findGuestByPhone(tx, propertyId, phone);
+    if (samePhone) return samePhone;
+  }
+  return insertGuest(tx, {
+    propertyId,
+    fullName: input.fullName,
+    phone: input.phone ?? null,
+    email: input.email ?? null,
+    idType: (input.idType as IdDocumentType | null | undefined) ?? null,
+    idNumber: input.idNumber ?? null,
+    createdBy: actor.id,
   });
 }
 

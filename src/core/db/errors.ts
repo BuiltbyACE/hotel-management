@@ -24,12 +24,26 @@ function isPgError(e: unknown): e is { code: string; constraint?: string; detail
 
 const uniqueMessages: Record<string, AppError> = {};
 
-export function translateDbError(e: unknown): AppError {
-  if (!isPgError(e)) return AppError.internal(e);
+/**
+ * Drizzle wraps driver errors in DrizzleQueryError (`.message` = "Failed query:
+ * ..."), preserving the Postgres error on `.cause`. Unwrap the chain so the SQL
+ * error code and constraint name surface for translation.
+ */
+function unwrap(e: unknown): unknown {
+  let err = e;
+  while (err instanceof Error && err.cause) {
+    err = err.cause;
+  }
+  return err;
+}
 
-  switch (e.code) {
+export function translateDbError(e: unknown): AppError {
+  const cause = unwrap(e);
+  if (!isPgError(cause)) return AppError.internal(e);
+
+  switch (cause.code) {
     case PG.EXCLUSION_VIOLATION:
-      if (e.constraint === 'room_allocations_no_overlap') {
+      if (cause.constraint === 'room_allocations_no_overlap') {
         return AppError.conflict(
           'ROOM_UNAVAILABLE',
           'That room was just taken for one or more of those nights.',
@@ -38,7 +52,7 @@ export function translateDbError(e: unknown): AppError {
       return AppError.conflict('OVERLAP', 'Conflicting record.');
 
     case PG.UNIQUE_VIOLATION:
-      return uniqueMessages[e.constraint ?? ''] ?? AppError.conflict('DUPLICATE', 'Record already exists.');
+      return uniqueMessages[cause.constraint ?? ''] ?? AppError.conflict('DUPLICATE', 'Record already exists.');
 
     case PG.FK_VIOLATION:
       return AppError.badRequest('REFERENCE_INVALID', 'Referenced record does not exist.');
