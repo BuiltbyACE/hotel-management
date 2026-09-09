@@ -12,6 +12,7 @@ import { eq, or, sql } from 'drizzle-orm';
 import { jobQueue } from '@/core/db/infra';
 import { withDb, type Db } from '@/core/db';
 import { createLogger } from '@/core/logger';
+import { bumpCounter } from '@/core/metrics';
 
 export interface JobContext {
   jobId: number;
@@ -78,6 +79,7 @@ async function processClaimed(job: ClaimedJob): Promise<void> {
 
   if (!handler) {
     logger.warn({ jobType: job.jobType, jobId: job.id }, 'no handler registered for job type');
+    bumpCounter('job_failures_total');
     await markFailed(job, new Error(`No handler registered for "${job.jobType}"`));
     return;
   }
@@ -91,6 +93,7 @@ async function processClaimed(job: ClaimedJob): Promise<void> {
     await markCompleted(job.id);
   } catch (e) {
     logger.error({ jobType: job.jobType, jobId: job.id, err: e instanceof Error ? e : undefined }, 'job failed');
+    bumpCounter('job_failures_total');
     await markFailed(job, e instanceof Error ? e : new Error(String(e)));
   }
 }
