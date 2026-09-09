@@ -305,6 +305,27 @@ export async function listRooms(db: Db, filters: RoomListFilters): Promise<RoomR
   return db.select(ROOM_COLUMNS).from(rooms).where(roomFilters(filters)).orderBy(asc(rooms.roomNumber)).limit(filters.limit).offset(filters.offset);
 }
 
+/** Every active room for a property — the housekeeping board source (§13.4). */
+export async function listActiveRooms(db: Db, propertyId: string): Promise<RoomRecord[]> {
+  return db
+    .select(ROOM_COLUMNS)
+    .from(rooms)
+    .where(and(eq(rooms.propertyId, propertyId), ACTIVE_ROOM))
+    .orderBy(asc(rooms.roomNumber));
+}
+
+/** Board tile flip (housekeeping + optional condition) for housekeeping.update. */
+export function updateRoomBoardState(
+  tx: Tx,
+  id: string,
+  patch: { housekeeping?: HousekeepingStatus; condition?: RoomCondition },
+): Promise<RoomRecord> {
+  const values: Record<string, unknown> = {};
+  if (patch.housekeeping !== undefined) values.housekeeping = patch.housekeeping;
+  if (patch.condition !== undefined) values.condition = patch.condition;
+  return tx.update(rooms).set(values).where(eq(rooms.id, id)).returning(ROOM_COLUMNS).then((rows) => rows[0]!);
+}
+
 export async function countRooms(db: Db, filters: Omit<RoomListFilters, 'limit' | 'offset'>): Promise<number> {
   const rows = await db.select({ n: sql<number>`count(*)::int` }).from(rooms).where(roomFilters(filters));
   return rows[0]?.n ?? 0;

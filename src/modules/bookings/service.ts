@@ -35,6 +35,9 @@ import {
   insertPayment,
   insertRoomAllocation,
   listBookings,
+  listInHouseRoomRows,
+  listRoomsArrivingOn,
+  listRoomsDepartingOn,
   lockBookingForUpdate,
   lockRoomRowsForUpdate,
   paymentsForBooking,
@@ -48,6 +51,7 @@ import {
   updateRoomCondition,
   voidPayment,
   type BookingRecord,
+  type FrontdeskRowRecord,
   type PaymentRecord,
 } from './repository';
 import { BOOKING_EVENTS } from './events';
@@ -497,6 +501,28 @@ export async function getBookingDetail(bookingId: string, actor: Actor): Promise
     const payments = await paymentsForBooking(tx, bookingId);
     return { booking: toBookingView(booking), allocations, payments: payments.map(toPaymentView) };
   });
+}
+
+// ─── Front-desk reads ─────────────────────────────────────────────────────────
+// Ledger-derived lists for the front desk today board (§13.1) and the
+// housekeeping board (§13.4). No business rules — projections.
+
+/** Rooms with an allocation starting `date` (expected arrivals). */
+export async function expectedArrivals(date: string, actor: Actor): Promise<FrontdeskRowRecord[]> {
+  const propertyId = await scopeProperty(actor);
+  return withDb((db) => listRoomsArrivingOn(db, propertyId, date));
+}
+
+/** Rooms with an allocation ending `date` (due out today or already out). */
+export async function expectedDepartures(date: string, actor: Actor): Promise<FrontdeskRowRecord[]> {
+  const propertyId = await scopeProperty(actor);
+  return withDb((db) => listRoomsDepartingOn(db, propertyId, date));
+}
+
+/** Rooms occupied right now (checked-in allocations). */
+export async function inHouseRooms(actor: Actor): Promise<FrontdeskRowRecord[]> {
+  const propertyId = await scopeProperty(actor);
+  return withDb((db) => listInHouseRoomRows(db, propertyId));
 }
 
 // ─── Internals ───────────────────────────────────────────────────────────────

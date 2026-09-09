@@ -29,6 +29,7 @@ import {
   insertRateRule,
   insertRoom,
   insertRoomType,
+  listActiveRooms,
   listRateRules as listRateRuleRows,
   listRooms as listRoomRows,
   listRoomTypes as listRoomTypeRows,
@@ -37,6 +38,7 @@ import {
   setRoomCondition,
   softDeleteRoom,
   softDeleteRoomType,
+  updateRoomBoardState,
   updateRoomById,
   updateRoomTypeById,
   upsertSettings,
@@ -47,7 +49,7 @@ import {
   type SettingRecord,
 } from './repository';
 import { PROPERTY_EVENTS } from './events';
-import type { RateRuleView, RoomTypeView, RoomView, SettingView } from './types';
+import type { RateRuleView, RoomTypeView, RoomView, SettingView, HousekeepingStatus, RoomCondition } from './types';
 import type {
   ChangeConditionInput,
   CreateRateRuleInput,
@@ -386,6 +388,63 @@ export async function changeRoomCondition(
       entityType: 'room',
       entityId: row.id,
       summary: `Room ${row.roomNumber} condition ${target.condition} → ${row.condition}`,
+    });
+    return row;
+  });
+
+  return toRoomView(updated);
+}
+
+/** Every active room for a property — consumed by the housekeeping board. */
+export async function listRoomsForBoard(actor: Actor): Promise<RoomView[]> {
+  const propertyId = await scopeProperty(actor);
+  const rows = await withDb((db) => listActiveRooms(db, propertyId));
+  return rows.map(toRoomView);
+}
+
+/**
+ * Board tile flip written on behalf of the housekeeping module (§13.4).
+ * `housekeeping.update` is enforced by the housekeeping ROUTE; the property
+ * module owns the rooms DDL and re-emits room.condition_changed when the
+ * condition leg is set. Condition is the room's physical state — it stays
+ * separate from the housekeeping status the board updates one-tap.
+ */
+export async function setHousekeepingState(
+  id: string,
+  input: { housekeeping?: HousekeepingStatus; condition?: RoomCondition },
+  actor: Actor,
+): Promise<RoomView> {
+  const target = await withDb((db) => findRoomById(db, id));
+  if (!target) throw AppError.notFound('Room not found');
+  if (input.housekeeping === undefined && input.condition === undefined) {
+    throw AppError.badRequest('VALIDATION_ERROR', 'Nothing to update');
+  }
+
+  const conditionChanged = input.condition !== undefined && input.condition !== target.condition;
+  const updated = await withTx(async (tx) => {
+    const row = await updateRoomBoardState(tx, id, {
+      housekeeping: input.housekeeping,
+      condition: input.condition,
+    });
+    if (conditionChanged) {
+      await eventBus.emit(PROPERTY_EVENTS.roomConditionChanged, {
+        roomId: row.id,
+        roomNumber: row.roomNumber,
+        from: target.condition,
+        to: row.condition,
+        note: null,
+        by: actor.email,
+      });
+    }
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: target.propertyId,
+      action: 'housekeeping.update',
+      entityType: 'room',
+      entityId: row.id,
+      summary: `Room ${row.roomNumber} housekeeping → ${row.housekeeping}${
+        conditionChanged ? `, condition → ${row.condition}` : ''
+      }`,
     });
     return row;
   });

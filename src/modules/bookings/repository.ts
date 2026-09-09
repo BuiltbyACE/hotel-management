@@ -271,6 +271,78 @@ function statusOrSearch(f: { search?: string; status?: string }) {
   );
 }
 
+// ─── Front-desk reads (the allocation ledger via the core schema barrel) ─────
+// The arrivals / departures / in-house lists the front desk and housekeeping
+// board need. Allocations are the single source of truth for what a room is
+// doing on a given day (blueprint §13.1, §13.4).
+
+export interface FrontdeskRowRecord {
+  bookingId: string;
+  reference: string;
+  status: string;
+  guestName: string;
+  roomId: string;
+  roomNumber: string;
+  date: string;
+}
+
+async function frontdeskRows(
+  db: Db,
+  propertyId: string,
+  dateColumn: 'startDate' | 'endDate',
+  statuses: AllocationStatusValue[],
+  matchDate?: string,
+): Promise<FrontdeskRowRecord[]> {
+  const a = schema.roomAllocations;
+  const date = dateColumn === 'startDate' ? a.startDate : a.endDate;
+  const rows = await db
+    .select({
+      bookingId: a.bookingId,
+      reference: bookings.reference,
+      status: bookings.status,
+      guestName: bookings.guestNameSnapshot,
+      roomId: a.roomId,
+      roomNumber: schema.rooms.roomNumber,
+      date: a.startDate,
+    })
+    .from(a)
+    .innerJoin(bookings, eq(bookings.id, a.bookingId))
+    .innerJoin(schema.rooms, eq(schema.rooms.id, a.roomId))
+    .where(
+      and(
+        eq(a.propertyId, propertyId),
+        eq(a.kind, 'reservation'),
+        inArray(a.status, statuses),
+        matchDate ? eq(date, matchDate) : undefined,
+      ),
+    )
+    .orderBy(asc(schema.rooms.roomNumber));
+  return rows.map((r) => ({
+    bookingId: r.bookingId!,
+    reference: r.reference,
+    status: r.status,
+    guestName: r.guestName,
+    roomId: r.roomId,
+    roomNumber: r.roomNumber,
+    date: r.date,
+  }));
+}
+
+/** Rooms whose allocation starts on `date` (expected arrivals). */
+export async function listRoomsArrivingOn(db: Db, propertyId: string, date: string): Promise<FrontdeskRowRecord[]> {
+  return frontdeskRows(db, propertyId, 'startDate', ['confirmed', 'checked_in'], date);
+}
+
+/** Rooms whose allocation ends on `date` (checks out today or already out). */
+export async function listRoomsDepartingOn(db: Db, propertyId: string, date: string): Promise<FrontdeskRowRecord[]> {
+  return frontdeskRows(db, propertyId, 'endDate', ['confirmed', 'checked_in', 'checked_out'], date);
+}
+
+/** Rooms occupied right now (checked-in allocations). */
+export async function listInHouseRoomRows(db: Db, propertyId: string): Promise<FrontdeskRowRecord[]> {
+  return frontdeskRows(db, propertyId, 'startDate', ['checked_in']);
+}
+
 // ─── Booking writes ──────────────────────────────────────────────────────────
 
 export interface InsertBookingValues {
