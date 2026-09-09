@@ -44,6 +44,7 @@ import {
   lockBookingForFinance,
   markNightsPosted,
   paymentsForBooking,
+  postableNightsForDate,
   readTaxSettings,
   roomLabels,
   sumCompletedPayments,
@@ -306,6 +307,158 @@ export async function voidCharge(bookingId: string, chargeId: string, reason: st
     });
     return toFolioChargeView(updated);
   });
+}
+
+// ─── Night audit posting (§13.3) ─────────────────────────────────────────────
+// The nightly sweep posts each unposted in-house stay date to the folio (room +
+// VAT/levy lines) and books no-show fees. Both reuse the same per-line posting
+// so the totals match what invoice issue would have produced (linear, §12.1).
+
+interface RoomChargeLinesOptions {
+  propertyId: string;
+  bookingId: string;
+  chargeType: 'room' | 'adjustment';
+  chargeDate: string;
+  description: string;
+  quantity: number;
+  unitAmount: string;
+  sourceNightId?: string | null;
+  postedBy: string | null;
+}
+
+/**
+ * Post the main line plus one VAT/levy split. Returns the total (all lines)
+ * added to the folio for the given date. Mirrors issueInvoice's arithmetic:
+ * the line itself never carries tax in the auto-post path.
+ */
+
+async function postRoomChargeLines(tx: Tx, o: RoomChargeLinesOptions): Promise<string> {
+  const tax = await readTaxSettings(tx);
+  const lineTotal = M.mul(M.of(o.unitAmount), o.quantity);
+  await insertFolioCharge(tx, {
+    propertyId: o.propertyId,
+    bookingId: o.bookingId,
+    chargeType: o.chargeType,
+    description: o.description,
+    quantity: o.quantity,
+    unitAmount: o.unitAmount,
+    taxRate: 0,
+    taxAmount: M.of(0),
+    totalAmount: lineTotal,
+    chargeDate: o.chargeDate,
+    sourceNightId: o.sourceNightId ?? null,
+    postedBy: o.postedBy,
+  });
+
+  if (tax.taxInclusive) return lineTotal;
+
+  const extras: string[] = [];
+  if (tax.vatRate > 0) {
+    const vat = M.pct(lineTotal, tax.vatRate);
+    await insertFolioCharge(tx, {
+      propertyId: o.propertyId,
+      bookingId: o.bookingId,
+      chargeType: 'tax',
+      description: o.chargeType === 'adjustment' ? `VAT (${tax.vatRate}%) · no-show fee` : `VAT (${tax.vatRate}%)`,
+      quantity: 1,
+      unitAmount: M.of(0),
+      taxRate: tax.vatRate,
+      taxAmount: vat,
+      totalAmount: vat,
+      chargeDate: o.chargeDate,
+      sourceNightId: null,
+      postedBy: o.postedBy,
+    });
+    extras.push(vat);
+  }
+  if (o.chargeType === 'room' && tax.levyRate > 0) {
+    const levy = M.pct(lineTotal, tax.levyRate);
+    await insertFolioCharge(tx, {
+      propertyId: o.propertyId,
+      bookingId: o.bookingId,
+      chargeType: 'levy',
+      description: `Levy (${tax.levyRate}%)`,
+      quantity: 1,
+      unitAmount: M.of(0),
+      taxRate: tax.levyRate,
+      taxAmount: levy,
+      totalAmount: levy,
+      chargeDate: o.chargeDate,
+      sourceNightId: null,
+      postedBy: o.postedBy,
+    });
+    extras.push(levy);
+  }
+  return M.add(lineTotal, ...extras);
+}
+
+export interface PostedNightsSummary {
+  nights: number;
+  roomRevenue: string;
+  totalRevenue: string;
+}
+
+/**
+ * Post every unposted night for a stay date across the property's in-house
+ * ledger, then resync the affected booking headers. Runs inside the caller's
+ * transaction (the night audit itself).
+ */
+export async function postUnpostedNightsForDate(
+  tx: Tx,
+  o: { propertyId: string; stayDate: string; postedBy: string | null },
+): Promise<PostedNightsSummary> {
+  const nights = await postableNightsForDate(tx, o.propertyId, o.stayDate);
+  if (nights.length === 0) return { nights: 0, roomRevenue: M.of(0), totalRevenue: M.of(0) };
+
+  const labels = await roomLabels(tx, [...new Set(nights.map((n) => n.roomId))]);
+  const roomTotals: string[] = [];
+  const grandTotals: string[] = [];
+  for (const night of nights) {
+    const total = await postRoomChargeLines(tx, {
+      propertyId: o.propertyId,
+      bookingId: night.bookingId,
+      chargeType: 'room',
+      chargeDate: o.stayDate,
+      description: `${labels.get(night.roomId) ?? 'Room'} · ${o.stayDate}`,
+      quantity: 1,
+      unitAmount: night.rate,
+      sourceNightId: night.id,
+      postedBy: o.postedBy,
+    });
+    roomTotals.push(night.rate);
+    grandTotals.push(total);
+  }
+  await markNightsPosted(tx, nights.map((n) => n.id));
+  for (const bookingId of new Set(nights.map((n) => n.bookingId))) {
+    await syncTotalChargesToLedger(tx, bookingId);
+  }
+  return { nights: nights.length, roomRevenue: M.add(...roomTotals), totalRevenue: M.add(...grandTotals) };
+}
+
+export interface NoShowFeeOptions {
+  propertyId: string;
+  bookingId: string;
+  chargeDate: string;
+  feeNights: number;
+  unitAmount: string;
+  postedBy: string | null;
+}
+
+/** Book the no-show fee (N nights × first room rate) as a taxed adjustment. */
+export async function postNoShowFee(tx: Tx, o: NoShowFeeOptions): Promise<string> {
+  const total = await postRoomChargeLines(tx, {
+    propertyId: o.propertyId,
+    bookingId: o.bookingId,
+    chargeType: 'adjustment',
+    chargeDate: o.chargeDate,
+    description: `No-show fee (${o.feeNights} night${o.feeNights === 1 ? '' : 's'})`,
+    quantity: o.feeNights,
+    unitAmount: o.unitAmount,
+    sourceNightId: null,
+    postedBy: o.postedBy,
+  });
+  await syncTotalChargesToLedger(tx, o.bookingId);
+  return total;
 }
 
 // ─── Invoices ────────────────────────────────────────────────────────────────

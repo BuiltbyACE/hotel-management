@@ -22,7 +22,7 @@ import { recordAudit, auditActor } from '@/modules/audit/service';
 import { type Actor } from '@/modules/identity/auth-guard';
 import { resolveOrCreate } from '@/modules/guests/service';
 import { quoteStay, type QuoteInput } from '@/modules/availability/service';
-import { syncInvoicePayments } from '@/modules/billing/service';
+import { syncInvoicePayments, postNoShowFee } from '@/modules/billing/service';
 import {
   allocationsForBooking,
   countBookings,
@@ -384,6 +384,66 @@ export async function cancelBooking(bookingId: string, input: CancelBookingInput
     });
     return toBookingView(updated);
   });
+}
+
+// ─── No-shows (night audit, §13.3) ───────────────────────────────────────────
+
+/** Audit actor shape — structurally compatible with the audit module's actor. */
+export interface NoShowAuditIdentity {
+  id: string | null;
+  name: string;
+  role: 'admin' | 'manager' | 'receptionist' | null;
+}
+
+export interface MarkNoShowOptions {
+  propertyId: string;
+  /** The business date being audited; a confirmed booking arriving on/before it is due. */
+  businessDate: string;
+  /** Number of nights to charge for the no-show fee (settings `no_show_fee_nights`). */
+  feeNights: number;
+  audit: NoShowAuditIdentity;
+}
+
+/**
+ * confirmed → no_show. Runs inside the caller's transaction (night audit).
+ * Releases the rooms, books the no-show fee (first allocation's rate snapshot
+ * × fee nights) and records the trail. Idempotent by construction: a booking
+ * that is not confirmed or not yet due is untouched.
+ */
+export async function markBookingNoShow(
+  tx: Tx,
+  bookingId: string,
+  o: MarkNoShowOptions,
+): Promise<{ marked: boolean; reference: string }> {
+  const booking = await lockBookingForUpdate(tx, o.propertyId, bookingId);
+  if (!booking) return { marked: false, reference: '' };
+  if (booking.status !== 'confirmed') return { marked: false, reference: '' };
+  if (booking.arrivalDate > o.businessDate) return { marked: false, reference: '' };
+
+  const allocations = await allocationsForBooking(tx, bookingId);
+  const firstRate = String(allocations[0]?.rateSnapshot ?? '0');
+  if (o.feeNights > 0 && !M.isZero(M.of(firstRate))) {
+    await postNoShowFee(tx, {
+      propertyId: o.propertyId,
+      bookingId,
+      chargeDate: booking.arrivalDate,
+      feeNights: o.feeNights,
+      unitAmount: firstRate,
+      postedBy: o.audit.id,
+    });
+  }
+  await releaseReservationsForBooking(tx, bookingId);
+  await updateBookingStatus(tx, bookingId, { status: 'no_show' });
+  await eventBus.emit(BOOKING_EVENTS.bookingNoShow, { bookingId, by: booking.reference });
+  await recordAudit(tx, {
+    actor: o.audit,
+    propertyId: o.propertyId,
+    action: 'bookings.no_show',
+    entityType: 'booking',
+    entityId: bookingId,
+    summary: `Booking ${booking.reference} marked no-show by night audit`,
+  });
+  return { marked: true, reference: booking.reference };
 }
 
 // ─── Payments ────────────────────────────────────────────────────────────────

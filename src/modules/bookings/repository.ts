@@ -225,6 +225,7 @@ export async function allocationsForBooking(tx: Tx, bookingId: string) {
       status: a.status,
       startDate: a.startDate,
       endDate: a.endDate,
+      rateSnapshot: a.rateSnapshot,
     })
     .from(a)
     .where(eq(a.bookingId, bookingId))

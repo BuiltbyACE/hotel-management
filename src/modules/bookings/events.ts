@@ -10,6 +10,7 @@ export const BOOKING_EVENTS = {
   bookingCheckedIn: 'booking.checked_in',
   bookingCheckedOut: 'booking.checked_out',
   bookingCancelled: 'booking.cancelled',
+  bookingNoShow: 'booking.no_show',
   paymentRecorded: 'payment.recorded',
   paymentReversed: 'payment.reversed',
 } as const;

@@ -152,7 +152,8 @@ export interface InsertFolioChargeValues {
   totalAmount: string;
   chargeDate: string;
   sourceNightId?: string | null;
-  postedBy: string;
+  /** Signed-in actor, or null for system-posted lines (night audit). */
+  postedBy: string | null;
 }
 
 export function insertFolioCharge(tx: Tx, v: InsertFolioChargeValues): Promise<FolioChargeRecord> {
@@ -260,6 +261,26 @@ export async function markNightsPosted(tx: Tx, nightIds: string[]): Promise<void
     .update(schema.bookingNights)
     .set({ isPosted: true })
     .where(inArray(schema.bookingNights.id, nightIds));
+}
+
+/**
+ * Unposted nights on an in-house (or already-checked-out) booking for one
+ * stay date — the night-audit sweep (§12.1). The no-show fee replaced the
+ * nights of a no-show booking, so `no_show` is deliberately excluded.
+ */
+export async function postableNightsForDate(tx: Tx, propertyId: string, stayDate: string): Promise<UnpostedNightRecord[]> {
+  const rows = await tx.execute(sql`
+    SELECT bn.id, bn.booking_id AS "bookingId", bn.room_id AS "roomId",
+           bn.room_type_id AS "roomTypeId", bn.stay_date AS "stayDate", bn.rate
+    FROM booking_nights bn
+    JOIN bookings b ON b.id = bn.booking_id
+    WHERE bn.property_id = ${propertyId}
+      AND bn.stay_date = ${stayDate}
+      AND bn.is_posted = false
+      AND b.status IN ('checked_in', 'checked_out')
+    ORDER BY bn.stay_date
+  `);
+  return rows.rows as unknown as UnpostedNightRecord[];
 }
 
 /** room id → human label for auto-posted room charges ("Deluxe · 201"). */

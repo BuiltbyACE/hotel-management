@@ -66,3 +66,9 @@ export const walkInSchema = z
   });
 
 export type WalkInInput = z.infer<typeof walkInSchema>;
+
+export const nightAuditBodySchema = z.object({
+  /** Target business date; defaults to yesterday when omitted. */
+  date: isoDate.optional(),
+});
+export type NightAuditInput = z.infer<typeof nightAuditBodySchema>;
