@@ -277,6 +277,125 @@ export async function activeUsersCount(db: DbOrTx): Promise<number> {
   return rows[0]!.n;
 }
 
+export interface BookingPeriodRecord {
+  key: string;
+  count: number;
+  nights: number;
+  value: string;
+}
+
+/**
+ * Realized bookings (confirmed / checked-in / checked-out) whose trip STARTS
+ * in [from, to], grouped by source or by arrival period (day / ISO week /
+ * month). Trip-based: a booking counts once, in its arrival period (§18.2).
+ */
+export async function bookingSummaries(
+  db: DbOrTx,
+  propertyId: string,
+  from: string,
+  to: string,
+  groupBy: 'day' | 'week' | 'month' | 'source',
+): Promise<BookingPeriodRecord[]> {
+  const keyCol =
+    groupBy === 'source'
+      ? sql`b.source`
+      : groupBy === 'month'
+        ? sql`to_char(b.arrival_date, 'YYYY-MM-01')`
+        : groupBy === 'week'
+          ? sql`to_char(date_trunc('week', b.arrival_date::timestamp)::date, 'YYYY-MM-DD')`
+          : sql`b.arrival_date`;
+  return rawRows<BookingPeriodRecord>(
+    db,
+    sql`SELECT ${keyCol} AS key,
+               count(*)::int AS count,
+               COALESCE(SUM(b.nights), 0)::int AS nights,
+               COALESCE(SUM(b.total_charges), 0)::numeric(14,2)::text AS value
+        FROM bookings b
+        WHERE b.property_id = ${propertyId}
+          AND b.status IN ('confirmed', 'checked_in', 'checked_out')
+          AND b.arrival_date BETWEEN ${from} AND ${to}
+        GROUP BY 1
+        ORDER BY key`,
+  );
+}
+
+export interface AvailabilityRecord {
+  roomType: string;
+  total: number;
+  occupied: number;
+  outOfOrder: number;
+}
+
+/**
+ * As-of snapshot from the live allocation ledger (§18.2 row 3). A room is
+ * occupied when it holds a booking_nights row for `date` under a stay that is
+ * actually in-house (checked_in/checked_out). Out-of-order = maintenance.
+ */
+export async function availabilityByRoomType(
+  db: DbOrTx,
+  propertyId: string,
+  date: string,
+): Promise<AvailabilityRecord[]> {
+  return rawRows<AvailabilityRecord>(
+    db,
+    sql`SELECT rt.name AS "roomType",
+               count(r.id)::int AS total,
+               count(bn.room_id)::int AS occupied,
+               count(*) FILTER (WHERE r.condition IN ('maintenance', 'out_of_order'))::int AS "outOfOrder"
+        FROM rooms r
+        JOIN room_types rt ON rt.id = r.room_type_id
+        LEFT JOIN booking_nights bn
+          ON bn.room_id = r.id
+         AND bn.stay_date = ${date}
+         AND EXISTS (
+               SELECT 1 FROM bookings b
+               WHERE b.id = bn.booking_id
+                 AND b.status IN ('checked_in', 'checked_out')
+             )
+        WHERE r.property_id = ${propertyId}
+          AND r.deleted_at IS NULL
+          AND r.is_active = true
+        GROUP BY rt.name
+        ORDER BY rt.name`,
+  );
+}
+
+export interface MaintenanceIssueRecord {
+  issueId: string;
+  reference: string;
+  title: string;
+  roomNumber: string | null;
+  priority: string;
+  status: string;
+  reportedAt: string;
+  resolvedAt: string | null;
+  timeToResolveHours: number | null;
+}
+
+/** Issues reported in [from, to] with time-to-resolve in hours (§18.2 row 8). */
+export async function maintenanceIssueRecords(
+  db: DbOrTx,
+  propertyId: string,
+  from: string,
+  to: string,
+): Promise<MaintenanceIssueRecord[]> {
+  return rawRows<MaintenanceIssueRecord>(
+    db,
+    sql`SELECT mi.id AS "issueId", mi.reference, mi.title, r.room_number AS "roomNumber",
+               mi.priority, mi.status, mi.reported_at AS "reportedAt",
+               mi.resolved_at AS "resolvedAt",
+               CASE WHEN mi.resolved_at IS NOT NULL
+                    THEN ROUND(EXTRACT(EPOCH FROM (mi.resolved_at - mi.reported_at)) / 3600, 1)
+                    ELSE NULL
+               END AS "timeToResolveHours"
+        FROM maintenance_issues mi
+        LEFT JOIN rooms r ON r.id = mi.room_id
+        WHERE mi.property_id = ${propertyId}
+          AND date(mi.reported_at) BETWEEN ${from} AND ${to}
+        ORDER BY mi.reported_at DESC`,
+  );
+}
+
 async function rawRows<T>(db: DbOrTx, stmt: ReturnType<typeof sql>): Promise<T[]> {
   const rows = await db.execute(stmt);
   return rows.rows as unknown as T[];

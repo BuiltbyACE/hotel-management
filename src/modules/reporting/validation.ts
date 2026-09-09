@@ -46,3 +46,14 @@ export type MaintenanceCostsQuery = z.infer<typeof maintenanceCostsQuerySchema>;
 
 export const profitSummaryQuerySchema = rangeQuerySchema;
 export type ProfitSummaryQuery = z.infer<typeof profitSummaryQuerySchema>;
+
+export const bookingsQuerySchema = rangeQuerySchema.extend({
+  groupBy: z.enum(['day', 'week', 'month', 'source']).default('day'),
+});
+export type BookingsQuery = z.infer<typeof bookingsQuerySchema>;
+
+export const availabilityQuerySchema = dateQuerySchema;
+export type AvailabilityQuery = z.infer<typeof availabilityQuerySchema>;
+
+export const maintenanceIssuesQuerySchema = rangeQuerySchema;
+export type MaintenanceIssuesQuery = z.infer<typeof maintenanceIssuesQuerySchema>;

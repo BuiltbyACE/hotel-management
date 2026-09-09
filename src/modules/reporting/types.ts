@@ -189,3 +189,68 @@ export interface DashboardView {
     activeUsers: number;
   };
 }
+
+/** One period of the bookings report (§18.2 row 1): trip-based, by arrival date. */
+export interface BookingsPeriodView {
+  key: string;
+  label: string;
+  count: number;
+  nights: number;
+  value: string;
+}
+
+export interface BookingsReportView {
+  from: string;
+  to: string;
+  groupBy: 'day' | 'week' | 'month' | 'source';
+  totals: {
+    count: number;
+    nights: number;
+    value: string;
+  };
+  rows: BookingsPeriodView[];
+}
+
+/** One room type in the as-of available/occupied snapshot (§18.2 row 3). */
+export interface RoomAvailabilityRowView {
+  roomType: string;
+  total: number;
+  occupied: number;
+  available: number;
+  outOfOrder: number;
+}
+
+export interface AvailabilitySnapshotView {
+  date: string;
+  totals: {
+    total: number;
+    occupied: number;
+    available: number;
+    outOfOrder: number;
+    occupancyPct: string;
+  };
+  rows: RoomAvailabilityRowView[];
+}
+
+/** One maintenance issue with its time-to-resolve (§18.2 row 8). */
+export interface MaintenanceIssueRowView {
+  issueId: string;
+  reference: string;
+  title: string;
+  roomNumber: string | null;
+  priority: string;
+  status: string;
+  reportedAt: string;
+  resolvedAt: string | null;
+  timeToResolveHours: number | null;
+}
+
+export interface MaintenanceIssuesReportView {
+  from: string;
+  to: string;
+  open: number;
+  closed: number;
+  meanTimeToResolveHours: number | null;
+  byPriority: { priority: string; open: number; closed: number }[];
+  rows: MaintenanceIssueRowView[];
+}

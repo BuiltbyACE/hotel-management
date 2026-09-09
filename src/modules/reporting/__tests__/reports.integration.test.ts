@@ -21,9 +21,12 @@ import { checkInBooking, createBooking } from '@/modules/bookings/service';
 import { runNightAudit } from '@/modules/frontdesk/service';
 import {
   arrivalsDeparturesReport,
+  availableRoomsSnapshot,
+  bookingsReport,
   dashboard,
   expensesReport,
   maintenanceCostsReport,
+  maintenanceIssuesReport,
   occupancyReport,
   outstandingBalancesReport,
   profitSummaryReport,
@@ -122,6 +125,7 @@ async function seed() {
         estimatedCost: '4000.00',
         reportedBy: userId,
         reportedAt: new Date(`${addDays(targetDate, -1)}T10:00:00Z`),
+        resolvedAt: new Date(`${addDays(targetDate, -1)}T18:00:00Z`),
       })
       .returning({ id: schema.maintenanceIssues.id })
       .then((rows) => rows[0]!.id);
@@ -136,6 +140,20 @@ async function seed() {
       method: 'cash',
       status: 'approved',
       recordedBy: userId,
+    });
+
+    // An open issue too, so the issues report exercises both halves.
+    await tx.insert(schema.maintenanceIssues).values({
+      propertyId,
+      reference: `MT-REP-OPEN-${randomUUID().slice(0, 4)}`,
+      title: 'Loose handle',
+      description: 'Bathroom door handle',
+      roomId,
+      priority: 'low',
+      status: 'in_progress',
+      estimatedCost: '500.00',
+      reportedBy: userId,
+      reportedAt: new Date(`${addDays(targetDate, -1)}T09:00:00Z`),
     });
   });
 }
@@ -298,7 +316,7 @@ describe('reporting (§18)', () => {
     expect(M.cmp(row!.actualCost, M.of('2500.00'))).toBe(0);
     expect(M.cmp(row!.variance, M.sub('2500.00', '4000.00'))).toBe(0);
     expect(row!.roomNumber).toBe('1');
-    expect(M.cmp(r.estimatedTotal, M.of('4000.00'))).toBe(0);
+    expect(M.cmp(r.estimatedTotal, M.of('4500.00'))).toBe(0); // 4000 Aircon + 500 Loose handle
     expect(M.cmp(r.actualTotal, M.of('2500.00'))).toBe(0);
   });
 
@@ -331,5 +349,58 @@ describe('reporting (§18)', () => {
 
   it('rejects an inverted date range', async () => {
     await expect(occupancyReport({ from: addDays(today(), 1), to: addDays(today(), -1) }, manager)).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('bookings report is trip-based: one booking, counted at arrival', async () => {
+    const bySource = await bookingsReport({ from: targetDate, to: targetDate, groupBy: 'source' }, manager);
+    const walkIn = bySource.rows.find((r) => r.key === 'walk_in');
+    expect(walkIn).toBeDefined();
+    expect(walkIn!.count).toBe(1);
+    expect(walkIn!.nights).toBe(2);
+    expect(M.toDecimal(walkIn!.value).gt(M.of('0'))).toBe(true);
+    expect(bySource.totals.count).toBe(1);
+
+    const byDay = await bookingsReport({ from: targetDate, to: targetDate }, manager);
+    expect(byDay.rows[0]!.key).toBe(targetDate);
+    expect(byDay.rows[0]!.count).toBe(1);
+    expect(byDay.totals.nights).toBe(2);
+    expect(M.cmp(byDay.totals.value, walkIn!.value)).toBe(0);
+  });
+
+  it('available-rooms snapshot: occupied in-house, free after departure', async () => {
+    const inHouse = await availableRoomsSnapshot({ date: targetDate }, manager);
+    const row = inHouse.rows.find((r) => r.roomType === 'Reporter');
+    expect(row).toBeDefined();
+    expect(row!.occupied).toBe(1);
+    expect(row!.available).toBe(0);
+    expect(inHouse.totals.total).toBe(1);
+    expect(inHouse.totals.occupied).toBe(1);
+
+    // Departure day: nights cover arrival..departure-1, so the room is free.
+    const after = await availableRoomsSnapshot({ date: addDays(targetDate, 2) }, manager);
+    expect(after.totals.occupied).toBe(0);
+    expect(after.totals.available).toBe(1);
+  });
+
+  it('maintenance-issues reports open/closed, priority, and mean time-to-resolve', async () => {
+    const r = await maintenanceIssuesReport({ from: addDays(targetDate, -10), to: targetDate }, manager);
+    const aircon = r.rows.find((x) => x.title === 'Aircon repair');
+    expect(aircon).toBeDefined();
+    expect(aircon!.status).toBe('resolved');
+    expect(aircon!.timeToResolveHours).toBe(8); // 10:00Z → 18:00Z
+    expect(aircon!.resolvedAt).toBe(new Date(`${addDays(targetDate, -1)}T18:00:00Z`).toISOString());
+
+    const open = r.rows.find((x) => x.title === 'Loose handle');
+    expect(open).toBeDefined();
+    expect(open!.status).toBe('in_progress');
+    expect(open!.timeToResolveHours).toBeNull();
+
+    expect(r.open).toBe(1);
+    expect(r.closed).toBe(1);
+    expect(r.meanTimeToResolveHours).toBe(8);
+    const high = r.byPriority.find((p) => p.priority === 'high');
+    const low = r.byPriority.find((p) => p.priority === 'low');
+    expect(high!.closed).toBe(1);
+    expect(low!.open).toBe(1);
   });
 });

@@ -19,10 +19,13 @@ import { expectedArrivals, expectedDepartures, inHouseRooms } from '@/modules/bo
 import { listRoomsForBoard } from '@/modules/property/service';
 import {
   activeUsersCount,
+  availabilityByRoomType,
+  bookingSummaries,
   dailyRows,
   expenseGroups,
   folioRevenueByDimension,
   maintenanceCostRecords,
+  maintenanceIssueRecords,
   openMaintenanceByPriority,
   outstandingRows,
   paymentsByMethodOn,
@@ -31,12 +34,17 @@ import {
 } from './repository';
 import type {
   ArrivalsDeparturesView,
+  AvailabilitySnapshotView,
+  BookingsPeriodView,
+  BookingsReportView,
   DashboardView,
   ExpenseGroupView,
   ExpenseReportView,
   LedgerRowView,
   MaintenanceCostReportView,
   MaintenanceCostRowView,
+  MaintenanceIssueRowView,
+  MaintenanceIssuesReportView,
   OccupancyPeriodView,
   OccupancyReportView,
   OutstandingBalancesView,
@@ -45,10 +53,14 @@ import type {
   ProfitSummaryView,
   RevenueBreakdownRow,
   RevenueReportView,
+  RoomAvailabilityRowView,
 } from './types';
 import type {
+  AvailabilityQuery,
+  BookingsQuery,
   ExpensesQuery,
   MaintenanceCostsQuery,
+  MaintenanceIssuesQuery,
   OccupancyQuery,
   ProfitSummaryQuery,
   RevenueQuery,
@@ -446,4 +458,110 @@ export async function dashboard(actor: Actor): Promise<DashboardView> {
   }
 
   return view;
+}
+
+/** Realized bookings by arrival period or source (§18.2 row 1). */
+export async function bookingsReport(
+  input: Omit<BookingsQuery, 'groupBy'> & { groupBy?: 'day' | 'week' | 'month' | 'source' },
+  actor: Actor,
+): Promise<BookingsReportView> {
+  const propertyId = await scopeProperty(actor);
+  const from = input.from ?? addDays(today(), -29);
+  const to = input.to ?? today();
+  assertRange(from, to);
+  const groupBy = input.groupBy ?? 'day';
+
+  const records = await withDb((db) => bookingSummaries(db, propertyId, from, to, groupBy));
+  const rows: BookingsPeriodView[] = records.map((r) => ({
+    key: r.key,
+    label: groupBy === 'source' ? r.key : labelFor(r.key, groupBy as GroupBy),
+    count: r.count,
+    nights: r.nights,
+    value: money(r.value),
+  }));
+
+  return {
+    from,
+    to,
+    groupBy,
+    totals: {
+      count: rows.reduce((n, r) => n + r.count, 0),
+      nights: rows.reduce((n, r) => n + r.nights, 0),
+      value: money(M.add(...rows.map((r) => r.value))),
+    },
+    rows,
+  };
+}
+
+/** As-of available/occupied snapshot (§18.2 row 3). */
+export async function availableRoomsSnapshot(input: AvailabilityQuery, actor: Actor): Promise<AvailabilitySnapshotView> {
+  const propertyId = await scopeProperty(actor);
+  const date = input.date ?? today();
+
+  const records = await withDb((db) => availabilityByRoomType(db, propertyId, date));
+  const rows: RoomAvailabilityRowView[] = records.map((r) => ({
+    roomType: r.roomType,
+    total: r.total,
+    occupied: r.occupied,
+    outOfOrder: r.outOfOrder,
+    available: r.total - r.occupied - r.outOfOrder,
+  }));
+  const total = rows.reduce((n, r) => n + r.total, 0);
+  const occupied = rows.reduce((n, r) => n + r.occupied, 0);
+  const outOfOrder = rows.reduce((n, r) => n + r.outOfOrder, 0);
+
+  return {
+    date,
+    totals: {
+      total,
+      occupied,
+      available: total - occupied - outOfOrder,
+      outOfOrder,
+      occupancyPct: occupancyPct(occupied, total),
+    },
+    rows,
+  };
+}
+
+/** Open/closed maintenance issues with mean time-to-resolve (§18.2 row 8). */
+export async function maintenanceIssuesReport(input: MaintenanceIssuesQuery, actor: Actor): Promise<MaintenanceIssuesReportView> {
+  const propertyId = await scopeProperty(actor);
+  const from = input.from ?? addDays(today(), -29);
+  const to = input.to ?? today();
+  assertRange(from, to);
+
+  const records = await withDb((db) => maintenanceIssueRecords(db, propertyId, from, to));
+  const rows: MaintenanceIssueRowView[] = records.map((r) => ({
+    issueId: r.issueId,
+    reference: r.reference,
+    title: r.title,
+    roomNumber: r.roomNumber,
+    priority: r.priority,
+    status: r.status,
+    reportedAt: new Date(r.reportedAt).toISOString(),
+    resolvedAt: r.resolvedAt ? new Date(r.resolvedAt).toISOString() : null,
+    timeToResolveHours: r.timeToResolveHours != null ? Number(r.timeToResolveHours) : null,
+  }));
+
+  const isClosed = (r: MaintenanceIssueRowView) => r.status === 'resolved' || r.status === 'closed';
+  const resolved = rows.filter((r) => r.timeToResolveHours != null);
+  const meanTimeToResolveHours =
+    resolved.length > 0
+      ? Math.round((resolved.reduce((s, r) => s + (r.timeToResolveHours ?? 0), 0) / resolved.length) * 10) / 10
+      : null;
+
+  const byPriority = [...new Set(rows.map((r) => r.priority))].map((priority) => {
+    const ofPriority = rows.filter((r) => r.priority === priority);
+    return { priority, open: ofPriority.filter((r) => !isClosed(r)).length, closed: ofPriority.filter(isClosed).length };
+  });
+
+  return {
+    from,
+    to,
+    open: rows.filter((r) => !isClosed(r)).length,
+    closed: rows.filter(isClosed).length,
+    meanTimeToResolveHours,
+    byPriority,
+    rows,
+  };
 }
