@@ -123,6 +123,13 @@ const defaultStorage: StorageAdapter = env.R2_ACCOUNT_ID
   ? new R2Storage(env.R2_BUCKET_PRIVATE, env.R2_PUBLIC_BASE_URL)
   : new LocalStorage();
 
+let currentStorage: StorageAdapter = defaultStorage;
+
 export function getStorage(): StorageAdapter {
-  return defaultStorage;
+  return currentStorage;
+}
+
+/** Test hook: point the app-wide adapter at a throwaway backend. */
+export function __useStorageAdapter(adapter: StorageAdapter): void {
+  currentStorage = adapter;
 }

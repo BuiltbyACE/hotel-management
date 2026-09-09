@@ -256,6 +256,7 @@ export async function createBooking(input: CreateBookingInput, actor: Actor): Pr
     // 10. Audit + outbox. NOTHING that talks to the network happens here.
     await eventBus.emit(BOOKING_EVENTS.bookingCreated, {
       bookingId: booking.id,
+      propertyId,
       reference,
       totalCharges,
       by: actor.email,
@@ -311,7 +312,7 @@ export async function checkInBooking(bookingId: string, actor: Actor, overrideDe
       checkedInAt: new Date(),
       checkedInBy: actor.id,
     });
-    await eventBus.emit(BOOKING_EVENTS.bookingCheckedIn, { bookingId, by: actor.email });
+    await eventBus.emit(BOOKING_EVENTS.bookingCheckedIn, { bookingId, propertyId, by: actor.email });
     await recordAudit(tx, {
       actor: auditActor(actor),
       propertyId,
@@ -343,7 +344,7 @@ export async function checkOutBooking(bookingId: string, actor: Actor): Promise<
       checkedOutAt: new Date(),
       checkedOutBy: actor.id,
     });
-    await eventBus.emit(BOOKING_EVENTS.bookingCheckedOut, { bookingId, by: actor.email });
+    await eventBus.emit(BOOKING_EVENTS.bookingCheckedOut, { bookingId, propertyId, by: actor.email });
     await recordAudit(tx, {
       actor: auditActor(actor),
       propertyId,

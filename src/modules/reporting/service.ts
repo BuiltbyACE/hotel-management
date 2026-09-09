@@ -10,6 +10,7 @@
  * The module wrote nothing in Chunk 2-4; reporting is the read-across layer.
  */
 import { format as dfFormat, parseISO } from 'date-fns';
+import { z } from 'zod';
 import { AppError } from '@/core/api';
 import { withDb } from '@/core/db';
 import { addDays, today, type DateOnly } from '@/core/dates';
@@ -65,12 +66,73 @@ import type {
   ProfitSummaryQuery,
   RevenueQuery,
 } from './validation';
+import {
+  availabilityQuerySchema,
+  bookingsQuerySchema,
+  dateQuerySchema,
+  expensesQuerySchema,
+  maintenanceCostsQuerySchema,
+  maintenanceIssuesQuerySchema,
+  occupancyQuerySchema,
+  profitSummaryQuerySchema,
+  revenueQuerySchema,
+} from './validation';
 
 type GroupBy = 'day' | 'week' | 'month';
 async function scopeProperty(actor: Actor): Promise<string> {
   const propertyId = await withDb((db) => resolvePropertyId(db, actor.propertyId));
   if (!propertyId) throw AppError.notFound('No active property is configured');
   return propertyId;
+}
+
+/** Report names a user may export (§18.3). Kept here so routes only touch service + validation. */
+export const EXPORT_REPORT_NAMES = [
+  'occupancy',
+  'revenue',
+  'arrivals-departures',
+  'outstanding-balances',
+  'expenses',
+  'maintenance-costs',
+  'profit-summary',
+  'bookings',
+  'available-rooms',
+  'maintenance-issues',
+] as const;
+export type ExportReportName = (typeof EXPORT_REPORT_NAMES)[number];
+
+const EXPORT_SCHEMAS: Record<ExportReportName, z.ZodType> = {
+  occupancy: occupancyQuerySchema,
+  revenue: revenueQuerySchema,
+  'arrivals-departures': dateQuerySchema,
+  'outstanding-balances': dateQuerySchema,
+  expenses: expensesQuerySchema,
+  'maintenance-costs': maintenanceCostsQuerySchema,
+  'profit-summary': profitSummaryQuerySchema,
+  bookings: bookingsQuerySchema,
+  'available-rooms': availabilityQuerySchema,
+  'maintenance-issues': maintenanceIssuesQuerySchema,
+};
+
+export function validateExportName(name: string): ExportReportName {
+  if (!(EXPORT_REPORT_NAMES as readonly string[]).includes(name)) {
+    throw AppError.notFound('Unknown report');
+  }
+  return name as ExportReportName;
+}
+
+/** The validated query schema for a report export (feeds the route validation). */
+export function schemaForExport(name: ExportReportName): z.ZodType {
+  return EXPORT_SCHEMAS[name];
+}
+
+/**
+ * Resolve the property an export runs for: the actor's own property, or the
+ * single active property when the actor is property-less (system admin).
+ * Fails fast at request time so a bad export requests 404s immediately
+ * instead of dead-lettering in the job queue.
+ */
+export async function exportPropertyId(actor: Actor): Promise<string> {
+  return scopeProperty(actor);
 }
 
 function assertRange(from: string, to: string): void {
