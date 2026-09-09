@@ -17,6 +17,7 @@ import { withDb, withTx } from '@/core/db';
 import { eventBus } from '@/core/events';
 import { AppError } from '@/core/api';
 import { type Actor } from '@/modules/identity/auth-guard';
+import { auditActor, recordAudit } from '@/modules/audit/service';
 import {
   countLiveAllocations,
   countRooms,
@@ -171,6 +172,14 @@ export async function createRoomType(input: CreateRoomTypeInput, actor: Actor): 
       name: row.name,
       by: actor.email,
     });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'roomtypes.create',
+      entityType: 'room_type',
+      entityId: row.id,
+      summary: `Room type ${row.code} ${row.name} created`,
+    });
     return row;
   });
 
@@ -211,6 +220,14 @@ export async function updateRoomType(id: string, input: UpdateRoomTypeInput, act
       isActive: input.isActive,
     });
     await eventBus.emit(PROPERTY_EVENTS.roomTypeUpdated, { id, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: target.propertyId,
+      action: 'roomtypes.update',
+      entityType: 'room_type',
+      entityId: id,
+      summary: `Room type ${target.code} ${target.name} updated`,
+    });
     return row;
   });
 
@@ -230,6 +247,14 @@ export async function deleteRoomType(id: string, actor: Actor): Promise<void> {
   await withTx(async (tx) => {
     await softDeleteRoomType(tx, id);
     await eventBus.emit(PROPERTY_EVENTS.roomTypeDeleted, { id, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: target.propertyId,
+      action: 'roomtypes.delete',
+      entityType: 'room_type',
+      entityId: id,
+      summary: `Room type ${target.code} ${target.name} deleted`,
+    });
   });
 }
 
@@ -276,6 +301,14 @@ export async function createRoom(input: CreateRoomInput, actor: Actor): Promise<
       roomNumber: row.roomNumber,
       by: actor.email,
     });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'rooms.create',
+      entityType: 'room',
+      entityId: row.id,
+      summary: `Room ${row.roomNumber} created`,
+    });
     return row;
   });
 
@@ -310,6 +343,14 @@ export async function updateRoom(id: string, input: UpdateRoomInput, actor: Acto
       isActive: input.isActive,
     });
     await eventBus.emit(PROPERTY_EVENTS.roomUpdated, { id, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: target.propertyId,
+      action: 'rooms.update',
+      entityType: 'room',
+      entityId: id,
+      summary: `Room ${target.roomNumber} updated`,
+    });
     return row;
   });
 
@@ -338,6 +379,14 @@ export async function changeRoomCondition(
       note: input.note ?? null,
       by: actor.email,
     });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: target.propertyId,
+      action: 'rooms.change_condition',
+      entityType: 'room',
+      entityId: row.id,
+      summary: `Room ${row.roomNumber} condition ${target.condition} → ${row.condition}`,
+    });
     return row;
   });
 
@@ -357,6 +406,14 @@ export async function deleteRoom(id: string, actor: Actor): Promise<void> {
   await withTx(async (tx) => {
     await softDeleteRoom(tx, id);
     await eventBus.emit(PROPERTY_EVENTS.roomDeleted, { id, roomNumber: target.roomNumber, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: target.propertyId,
+      action: 'rooms.delete',
+      entityType: 'room',
+      entityId: id,
+      summary: `Room ${target.roomNumber} deleted`,
+    });
   });
 }
 
@@ -393,6 +450,14 @@ export async function createRateRule(input: CreateRateRuleInput, actor: Actor): 
       isActive: input.isActive,
     });
     await eventBus.emit(PROPERTY_EVENTS.rateRuleCreated, { id: row.id, name: row.name, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'rates.update',
+      entityType: 'rate_rule',
+      entityId: row.id,
+      summary: `Rate rule ${row.name} created`,
+    });
     return row;
   });
 
@@ -416,6 +481,13 @@ export async function updateSettings(input: UpdateSettingsInput, actor: Actor): 
     await eventBus.emit(PROPERTY_EVENTS.settingsUpdated, {
       keys: input.settings.map((s) => s.key),
       by: actor.email,
+    });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: null,
+      action: 'settings.update',
+      entityType: 'setting',
+      summary: `Settings updated: ${input.settings.map((s) => s.key).join(', ')}`,
     });
   });
   return getSettings(actor);

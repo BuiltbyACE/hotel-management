@@ -4,7 +4,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import { withDb, withTx, schema } from '@/core/db';
 import { AppError } from '@/core/api';
 import { createUser, listUsers, resetPassword, updateUser } from '@/modules/identity/service';
@@ -92,12 +92,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await withTx(async (tx) => {
+    // Users who acted or were audited now have append-only activity_logs
+    // references (actor_id FK) and can never be removed — unique UUIDs keep
+    // each run isolated, so they stay as residue.
     // Reverse order: users reference the bootstrap admin via created_by.
     for (const id of [...created].reverse()) {
       await tx.delete(schema.sessions).where(eq(schema.sessions.userId, id));
       await tx.delete(schema.userPermissionOverrides).where(eq(schema.userPermissionOverrides.userId, id));
       await tx.delete(schema.accounts).where(eq(schema.accounts.userId, id));
-      await tx.delete(schema.users).where(eq(schema.users.id, id));
     }
   });
 });
@@ -175,19 +177,35 @@ describe('updateUser', () => {
   });
 
   it('forbids disabling the last remaining active admin', async () => {
-    // Hermetic count: the guard counts ALL active admins, so first sink every
-    // admin (bootstrap + any admin created by earlier tests), then the only
-    // active admins are the two created below.
+    // The guard counts ALL active admins globally. Suites run in parallel and
+    // sign-in/route suites create more admins concurrently, so the hermetic
+    // count must be re-sunk right before each attempt until we observe the
+    // invariant this test is actually about.
     await withTx(async (tx) => {
       await tx.update(schema.users).set({ status: 'disabled' }).where(eq(schema.users.role, 'admin')).execute();
     });
 
-    const a = await create({ role: 'admin' });
-    const b = await create({ role: 'admin' });
-    await updateUser(a, { status: 'disabled' }, ADMIN);
-    await expect(updateUser(b, { status: 'disabled' }, ADMIN)).rejects.toSatisfy(
-      (e) => e instanceof AppError && e.code === 'FORBIDDEN',
-    );
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const a = await create({ role: 'admin' });
+      const b = await create({ role: 'admin' });
+      await updateUser(a, { status: 'disabled' }, ADMIN);
+      // Sink any admin created by a parallel suite since the first sink, so
+      // `b` is once again the only active admin.
+      await withTx(async (tx) => {
+        await tx
+          .update(schema.users)
+          .set({ status: 'disabled' })
+          .where(and(eq(schema.users.role, 'admin'), ne(schema.users.id, b)))
+          .execute();
+      });
+      try {
+        await updateUser(b, { status: 'disabled' }, ADMIN);
+      } catch (e) {
+        if (e instanceof AppError && e.code === 'FORBIDDEN') return;
+        throw e;
+      }
+    }
+    throw new Error('last-admin guard never observed (concurrent admin creation)');
   });
 });
 

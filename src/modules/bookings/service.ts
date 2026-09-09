@@ -18,6 +18,7 @@ import { M } from '@/core/money';
 import { today } from '@/core/dates';
 import { eventBus } from '@/core/events';
 import { enqueue as outbox } from '@/core/jobs';
+import { recordAudit, auditActor } from '@/modules/audit/service';
 import { type Actor } from '@/modules/identity/auth-guard';
 import { resolveOrCreate } from '@/modules/guests/service';
 import { quoteStay, type QuoteInput } from '@/modules/availability/service';
@@ -259,6 +260,14 @@ export async function createBooking(input: CreateBookingInput, actor: Actor): Pr
       { jobType: 'email.booking_confirmation', payload: { bookingId: booking.id }, propertyId, dedupeKey: `confirm:${booking.id}` },
       { jobType: 'realtime.broadcast', payload: { channel: 'availability', bookingId: booking.id }, propertyId },
     ]);
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'bookings.create',
+      entityType: 'booking',
+      entityId: booking.id,
+      summary: `Booking ${reference} created${input.payment ? ' with deposit' : ''}`,
+    });
 
     return toBookingView(final);
   });
@@ -299,6 +308,14 @@ export async function checkInBooking(bookingId: string, actor: Actor, overrideDe
       checkedInBy: actor.id,
     });
     await eventBus.emit(BOOKING_EVENTS.bookingCheckedIn, { bookingId, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'frontdesk.check_in',
+      entityType: 'booking',
+      entityId: bookingId,
+      summary: `Booking ${booking.reference} checked in`,
+    });
     return toBookingView(updated);
   });
 }
@@ -323,6 +340,14 @@ export async function checkOutBooking(bookingId: string, actor: Actor): Promise<
       checkedOutBy: actor.id,
     });
     await eventBus.emit(BOOKING_EVENTS.bookingCheckedOut, { bookingId, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'frontdesk.check_out',
+      entityType: 'booking',
+      entityId: bookingId,
+      summary: `Booking ${booking.reference} checked out`,
+    });
     return toBookingView(updated);
   });
 }
@@ -345,6 +370,14 @@ export async function cancelBooking(bookingId: string, input: CancelBookingInput
       cancellationReason: input.reason,
     });
     await eventBus.emit(BOOKING_EVENTS.bookingCancelled, { bookingId, reason: input.reason, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'bookings.cancel',
+      entityType: 'booking',
+      entityId: bookingId,
+      summary: `Booking ${booking.reference} cancelled: ${input.reason}`,
+    });
     return toBookingView(updated);
   });
 }
@@ -411,6 +444,14 @@ export async function reversePayment(bookingId: string, paymentId: string, input
     await syncInvoicePayments(tx, bookingId);
 
     await eventBus.emit(BOOKING_EVENTS.paymentReversed, { bookingId, paymentId, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'payments.reverse',
+      entityType: 'payment',
+      entityId: paymentId,
+      summary: `Payment ${payment.receiptNumber} reversed: ${input.reason}`,
+    });
     return toPaymentView(await findPaymentById(tx, paymentId).then((r) => r!));
   });
 }
@@ -500,6 +541,14 @@ record = await insertPayment(tx, {
   await outbox(tx, [
     { jobType: 'email.payment_receipt', payload: { paymentId: record.id }, propertyId, dedupeKey: `receipt:${record.id}` },
   ]);
+  await recordAudit(tx, {
+    actor: auditActor(actor),
+    propertyId,
+    action: paymentType === 'deposit' ? 'bookings.deposit' : 'payments.record',
+    entityType: 'payment',
+    entityId: record.id,
+    summary: `${paymentType === 'deposit' ? 'Deposit' : 'Payment'} ${reference} of ${record.amount} via ${record.method} recorded`,
+  });
   return { record, totalPaid };
 }
 

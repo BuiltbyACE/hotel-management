@@ -18,6 +18,7 @@ import { AppError } from '@/core/api';
 import { eventBus } from '@/core/events';
 import { getFileRecord, getStorage } from '@/core/files';
 import { type Actor } from '@/modules/identity/auth-guard';
+import { auditActor, recordAudit } from '@/modules/audit/service';
 import {
   blacklistGuestById,
   countGuestBookings,
@@ -154,6 +155,14 @@ export async function createGuest(input: CreateGuestInput, actor: Actor): Promis
       createdBy: actor.id,
     });
     await eventBus.emit(GUEST_EVENTS.guestCreated, { id: row.id, fullName: row.fullName, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'guests.create',
+      entityType: 'guest',
+      entityId: row.id,
+      summary: `Guest ${row.fullName} created`,
+    });
     return row;
   });
 
@@ -198,6 +207,14 @@ export async function updateGuest(id: string, input: UpdateGuestInput, actor: Ac
       notes: input.notes,
     });
     await eventBus.emit(GUEST_EVENTS.guestUpdated, { id, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: target.propertyId,
+      action: 'guests.update',
+      entityType: 'guest',
+      entityId: id,
+      summary: `Guest ${target.fullName} updated`,
+    });
     return row;
   });
 
@@ -216,6 +233,14 @@ export async function deleteGuest(id: string, actor: Actor): Promise<void> {
   await withTx(async (tx) => {
     await softDeleteGuest(tx, id);
     await eventBus.emit(GUEST_EVENTS.guestDeleted, { id, fullName: target.fullName, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: target.propertyId,
+      action: 'guests.delete',
+      entityType: 'guest',
+      entityId: id,
+      summary: `Guest ${target.fullName} deleted`,
+    });
   });
 }
 
@@ -270,6 +295,14 @@ export async function blacklistGuest(id: string, reason: string, actor: Actor): 
   const updated = await withTx(async (tx) => {
     const row = await blacklistGuestById(tx, id, reason);
     await eventBus.emit(GUEST_EVENTS.guestBlacklisted, { id, reason, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: target.propertyId,
+      action: 'guests.blacklist',
+      entityType: 'guest',
+      entityId: id,
+      summary: `Guest ${target.fullName} blacklisted: ${reason}`,
+    });
     return row;
   });
   return toGuestView(updated);
@@ -284,6 +317,14 @@ export async function unblacklistGuest(id: string, actor: Actor): Promise<GuestV
   const updated = await withTx(async (tx) => {
     const row = await unblacklistGuestById(tx, id);
     await eventBus.emit(GUEST_EVENTS.guestUnblacklisted, { id, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: target.propertyId,
+      action: 'guests.unblacklist',
+      entityType: 'guest',
+      entityId: id,
+      summary: `Guest ${target.fullName} unblacklisted`,
+    });
     return row;
   });
   return toGuestView(updated);
@@ -327,6 +368,14 @@ export async function mergeGuests(input: MergeGuestsInput, actor: Actor): Promis
       mergedIds: uniqueMerge,
       by: actor.email,
     });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'guests.merge',
+      entityType: 'guest',
+      entityId: keep.id,
+      summary: `Guests ${uniqueMerge.join(', ')} merged into ${keep.fullName}`,
+    });
   });
 
   return getGuest(keep.id, actor);
@@ -365,6 +414,14 @@ export async function attachDocument(
       documentId: row.id,
       docType: row.docType,
       by: actor.email,
+    });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: guest.propertyId,
+      action: 'guests.document_uploaded',
+      entityType: 'guest_document',
+      entityId: row.id,
+      summary: `Document (${row.docType}) attached to ${guest.fullName}`,
     });
     return row;
   });

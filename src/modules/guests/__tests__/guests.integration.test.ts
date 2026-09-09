@@ -134,16 +134,17 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await withTx(async (tx) => {
+    // properties + users now carry append-only activity_logs references
+    // (actor_id / property_id FKs) and can never be removed — unique UUIDs
+    // keep each run isolated, so they stay as residue.
     // far-property guests created by the merge-scope test
     for (const far of extraGuests) {
       await tx.delete(schema.guestDocuments).where(eq(schema.guestDocuments.guestId, far.guestId));
       await tx.delete(schema.guests).where(eq(schema.guests.id, far.guestId));
       await tx.delete(schema.files).where(eq(schema.files.propertyId, far.propertyId));
-      await tx.delete(schema.properties).where(eq(schema.properties.id, far.propertyId));
     }
     for (const far of extraFiles) {
       await tx.delete(schema.files).where(eq(schema.files.id, far.fileId));
-      await tx.delete(schema.properties).where(eq(schema.properties.id, far.propertyId));
     }
 
     const guestIds = await tx.select({ id: schema.guests.id }).from(schema.guests).where(eq(schema.guests.propertyId, propertyId));
@@ -155,11 +156,9 @@ afterAll(async () => {
     }
     await tx.delete(schema.files).where(eq(schema.files.propertyId, propertyId));
     await tx.delete(schema.guests).where(eq(schema.guests.propertyId, propertyId));
-    await tx.delete(schema.properties).where(eq(schema.properties.id, propertyId));
     for (const id of userIds) {
       await tx.delete(schema.sessions).where(eq(schema.sessions.userId, id));
       await tx.delete(schema.accounts).where(eq(schema.accounts.userId, id));
-      await tx.delete(schema.users).where(eq(schema.users.id, id));
     }
   });
 });

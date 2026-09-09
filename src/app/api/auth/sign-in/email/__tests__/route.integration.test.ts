@@ -96,7 +96,8 @@ afterAll(async () => {
     for (const id of [...created].reverse()) {
       await db.delete(schema.sessions).where(eq(schema.sessions.userId, id));
       await db.delete(schema.accounts).where(eq(schema.accounts.userId, id));
-      await db.delete(schema.users).where(eq(schema.users.id, id));
+      // Users are now audit-referenced (activity_logs.actor_id FK, append-only)
+      // — they stay as residue, keyed by unique UUIDs.
     }
   });
 });

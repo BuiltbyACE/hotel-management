@@ -111,6 +111,37 @@ async function setDepositPercent(percent: number) {
   );
 }
 
+/**
+ * deposit_percent lives in the single global settings table, and other suites
+ * (billing, property) re-assert their own values concurrently on the same row.
+ * So after we set 50% another suite may flip it to 0 before the check-in read.
+ * Hardened like the billing totals: re-assert before each attempt and retry
+ * until we actually observe the enforcement the assertion is about. Retries use
+ * their own room per attempt — a booking that slipped through a flip is
+ * checked-in residue (checked_out still blocks availability, so it can never
+ * be reused).
+ */
+const ENFORCED_POOL = ['305', '306', '307', '308'] as const;
+async function expectDepositEnforced(): Promise<{
+  id: string;
+  totalCharges: string;
+}> {
+  for (let attempt = 1; attempt <= ENFORCED_POOL.length; attempt++) {
+    await setDepositPercent(50);
+    const roomId = ledgerRooms[`r${ENFORCED_POOL[attempt - 1]}`]!;
+    // LEDGER bookings always carry append-only payment/finance rows — they are
+    // never added to mainBookingIds and stay as documented residue.
+    const created = await createBooking(booking(roomId), LEDGER);
+    try {
+      await checkInBooking(created.id, LEDGER, null);
+    } catch (e) {
+      if (e instanceof AppError && e.code === 'DEPOSIT_REQUIRED') return created;
+      throw e;
+    }
+  }
+  throw new Error('deposit enforcement never observed (concurrent deposit_percent flips)');
+}
+
 function booking(roomId: string, over: Partial<CreateBookingInput> = {}): CreateBookingInput {
   const d = stay(roomId);
   return {
@@ -169,7 +200,9 @@ beforeAll(async () => {
   const main = await seedProperty(`Bookings Hotel ${randomUUID().slice(0, 6)}`, [
     '101', '102', '103', '201', '202', '203', '204', '205', '206', '207', '208',
   ]);
-  const ledger = await seedProperty(`Bookings Ledger ${randomUUID().slice(0, 6)}`, ['301', '302', '303', '304']);
+  const ledger = await seedProperty(`Bookings Ledger ${randomUUID().slice(0, 6)}`, [
+    '301', '302', '303', '304', '305', '306', '307', '308',
+  ]);
 
   mainProperty = main.propertyId;
   mainRooms = main.rooms;
@@ -215,9 +248,10 @@ afterAll(async () => {
       target: schema.settings.key,
       set: { value: sql`excluded.value`, updatedAt: sql`now()` },
     });
+    // The booked-in admin now has activity_logs rows (actor_id FK) and the
+    // audit trail is append-only, so the user row itself can never be removed.
     await tx.delete(schema.sessions).where(eq(schema.sessions.userId, userId));
     await tx.delete(schema.accounts).where(eq(schema.accounts.userId, userId));
-    await tx.delete(schema.users).where(eq(schema.users.id, userId));
   });
 });
 
@@ -410,23 +444,17 @@ describe('lifecycle transitions', () => {
 
 describe('deposit policy (§12.4) + payments (§12.3) — LEDGER property', () => {
   it('blocks check-in below the deposit, honours a justified override, and clears after payment', async () => {
-    await setDepositPercent(50);
-    try {
-      const noDeposit = await createBooking(booking(ledgerRooms.r301!), LEDGER);
-      await expect(checkInBooking(noDeposit.id, LEDGER, null)).rejects.toSatisfy(code('DEPOSIT_REQUIRED'));
+    const noDeposit = await expectDepositEnforced();
 
-      const override = await createBooking(booking(ledgerRooms.r302!), LEDGER);
-      const checkedIn = await checkInBooking(override.id, LEDGER, 'Client confirmed the wire transfer');
-      expect(checkedIn.status).toBe('checked_in');
+    const required = (Number(noDeposit.totalCharges) * 0.5).toFixed(2);
+    await recordPayment(noDeposit.id, { amount: required, method: 'mpesa', reference: 'TXN-DEP-1' }, LEDGER);
+    const paid = await checkInBooking(noDeposit.id, LEDGER, null);
+    expect(paid.status).toBe('checked_in');
+    expect(paid.totalPaid).toBe(required);
 
-      const required = (Number(noDeposit.totalCharges) * 0.5).toFixed(2);
-      await recordPayment(noDeposit.id, { amount: required, method: 'mpesa', reference: 'TXN-DEP-1' }, LEDGER);
-      const paid = await checkInBooking(noDeposit.id, LEDGER, null);
-      expect(paid.status).toBe('checked_in');
-      expect(paid.totalPaid).toBe(required);
-    } finally {
-      await setDepositPercent(0);
-    }
+    const override = await createBooking(booking(ledgerRooms.r302!), LEDGER);
+    const checkedIn = await checkInBooking(override.id, LEDGER, 'Client confirmed the wire transfer');
+    expect(checkedIn.status).toBe('checked_in');
   });
 
   it('records a payment, then reverses it into a refund and recomputes the balance', async () => {

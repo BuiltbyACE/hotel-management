@@ -27,6 +27,7 @@ import { eventBus } from '@/core/events';
 import { AppError } from '@/core/api';
 import { ROLE_LEVEL } from './permissions';
 import { canModifyUser, type Actor } from './auth-guard';
+import { auditActor, recordAudit } from '@/modules/audit/service';
 import {
   countActiveAdmins,
   countUsers,
@@ -93,6 +94,14 @@ export async function createUser(input: CreateUserInput, actor: Actor): Promise<
       id: randomUUID(),
       userId: user.id,
       passwordHash,
+    });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: input.propertyId ?? null,
+      action: 'users.create',
+      entityType: 'user',
+      entityId: user.id,
+      summary: `User ${input.email} created (${input.role})`,
     });
     return user.id;
   });
@@ -182,6 +191,14 @@ export async function updateUser(
         by: actor.email,
       });
     }
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: target.propertyId,
+      action: deactivating ? 'users.deactivate' : 'users.update',
+      entityType: 'user',
+      entityId: id,
+      summary: `User ${updated.email} ${deactivating ? `set to ${input.status}` : 'updated'}`,
+    });
   });
 
   const saved = await withDb((db) => findUserById(db, id));
@@ -207,6 +224,14 @@ export async function resetPassword(
     await flagPasswordReset(tx, id);
     await deleteUserSessions(tx, id);
     eventBus.emit(IDENTITY_EVENTS.userPasswordReset, { id, by: actor.email });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId: target.propertyId,
+      action: 'users.reset_password',
+      entityType: 'user',
+      entityId: id,
+      summary: `Temporary password issued for ${target.email}`,
+    });
   });
 
   const saved = await withDb((db) => findUserById(db, id));

@@ -48,6 +48,7 @@ const ADMIN = actor('admin', null);
 
 let propertyId = '';
 let secondPropertyId = '';
+let secondUserId = '';
 const userIds: string[] = [];
 const settingKeys: string[] = [];
 
@@ -135,6 +136,32 @@ beforeAll(async () => {
   ADMIN.propertyId = propertyId;
   ADMIN.id = seeded.user;
   userIds.push(seeded.user);
+
+  const second = await withTx(async (tx) => {
+    const user = await tx
+      .insert(schema.users)
+      .values({
+        id: randomUUID(),
+        name: 'Second Property Admin',
+        email: `prop-admin-2-${randomUUID().slice(0, 8)}@hotm.test`,
+        role: 'admin',
+        status: 'active',
+        mustChangePassword: true,
+        createdBy: null,
+      })
+      .returning({ id: schema.users.id })
+      .then((rows) => rows[0]!.id);
+    await tx.insert(schema.accounts).values({
+      id: randomUUID(),
+      userId: user,
+      providerId: 'credential',
+      accountId: user,
+      password: 'not-used-in-tests',
+    });
+    return user;
+  });
+  secondUserId = second;
+  userIds.push(second);
 });
 
 afterAll(async () => {
@@ -142,19 +169,19 @@ afterAll(async () => {
     for (const key of settingKeys) {
       await tx.delete(schema.settings).where(eq(schema.settings.key, key));
     }
+    // properties + users now carry append-only activity_logs references
+    // (actor_id / property_id FKs) and can never be removed — unique UUIDs
+    // keep each run isolated, so they stay as residue.
     for (const pid of [propertyId, secondPropertyId]) {
       await tx.delete(schema.roomAllocations).where(eq(schema.roomAllocations.propertyId, pid));
       await tx.delete(schema.rooms).where(eq(schema.rooms.propertyId, pid));
       await tx.delete(schema.roomTypes).where(eq(schema.roomTypes.propertyId, pid));
       await tx.delete(schema.rateRules).where(eq(schema.rateRules.propertyId, pid));
-      await tx.delete(schema.users).where(eq(schema.users.propertyId, pid));
-      await tx.delete(schema.properties).where(eq(schema.properties.id, pid));
     }
     // settings.updated_by → users → accounts/sessions
     for (const id of userIds) {
       await tx.delete(schema.sessions).where(eq(schema.sessions.userId, id));
       await tx.delete(schema.accounts).where(eq(schema.accounts.userId, id));
-      await tx.delete(schema.users).where(eq(schema.users.id, id));
     }
   });
 });
@@ -178,7 +205,7 @@ describe('room types', () => {
   });
 
   it('allows the same code on a different property', async () => {
-    const other = actor('admin', secondPropertyId);
+    const other = actor('admin', secondPropertyId, secondUserId);
     await createType({ code: 'SHAREDCODE' });
     const rt = await createRoomType(
       {

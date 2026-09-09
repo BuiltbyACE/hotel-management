@@ -23,6 +23,7 @@ import { M } from '@/core/money';
 import { today } from '@/core/dates';
 import { eventBus } from '@/core/events';
 import { type Actor } from '@/modules/identity/auth-guard';
+import { auditActor, recordAudit } from '@/modules/audit/service';
 import {
   applyTotalChargesDelta,
   countInvoices,
@@ -259,6 +260,14 @@ export async function postCharge(bookingId: string, input: PostChargeInput, acto
       amount: totalAmount,
       by: actor.email,
     });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'folio.post_charge',
+      entityType: 'folio_charge',
+      entityId: charge.id,
+      summary: `${charge.description} ${charge.quantity}×${charge.unitAmount} (${totalAmount}) posted`,
+    });
     return toFolioChargeView(charge);
   });
 }
@@ -286,6 +295,14 @@ export async function voidCharge(bookingId: string, chargeId: string, reason: st
       amount: charge.totalAmount,
       reason,
       by: actor.email,
+    });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'folio.void_charge',
+      entityType: 'folio_charge',
+      entityId: chargeId,
+      summary: `${charge.description} (${charge.totalAmount}) voided: ${reason}`,
     });
     return toFolioChargeView(updated);
   });
@@ -429,6 +446,14 @@ export async function issueInvoice(bookingId: string, actor: Actor): Promise<Inv
       grandTotal: totals.grandTotal,
       by: actor.email,
     });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'invoices.issue',
+      entityType: 'invoice',
+      entityId: invoice.id,
+      summary: `Invoice ${reference} issued for ${totals.grandTotal}`,
+    });
 
     const lines = await invoiceLinesForInvoice(tx, invoice.id);
     return toInvoiceView(invoice, lines.map(toInvoiceLineView));
@@ -493,6 +518,14 @@ export async function voidInvoice(invoiceId: string, reason: string, actor: Acto
       invoiceNumber: invoice.invoiceNumber,
       reason,
       by: actor.email,
+    });
+    await recordAudit(tx, {
+      actor: auditActor(actor),
+      propertyId,
+      action: 'invoices.void',
+      entityType: 'invoice',
+      entityId: invoiceId,
+      summary: `Invoice ${invoice.invoiceNumber} voided: ${reason}`,
     });
     const lines = await invoiceLinesForInvoice(tx, invoiceId);
     return toInvoiceView(updated, lines.map(toInvoiceLineView));
