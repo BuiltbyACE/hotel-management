@@ -8,7 +8,7 @@
  * The advisory lock serialises allocators; the composite PK on
  * (property_id, name, period) makes concurrent first-allocations safe.
  */
-import { eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { numberSequences } from './infra';
 import type { Tx } from './index';
 import { withAdvisoryLock } from './index';
@@ -47,7 +47,11 @@ export async function nextNumber(
       ? await tx
           .update(numberSequences)
           .set({ nextValue: nextValue + 1 })
-          .where(eq(numberSequences.propertyId, propertyId))
+          .where(
+            sql`${numberSequences.propertyId} = ${propertyId}
+                AND ${numberSequences.name} = ${name}
+                AND ${numberSequences.period} = ${opts.period}`,
+          )
           .returning()
       : await tx
           .insert(numberSequences)

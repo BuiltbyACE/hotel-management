@@ -5,12 +5,14 @@
  * job_queue is DELETE-revoked for hms_app, so cleanup runs as the migration
  * role with a dedicated pool.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { closeMigratorPool, runAsMigrator, withDb, withTx } from '@/core/db';
 import { jobQueue } from '@/core/db/infra';
 import { enqueue, type JobSpec } from '@/core/jobs';
 import { registerHandler, runWorkerPass } from '@/core/jobs/worker';
+
+vi.setConfig({ testTimeout: 60_000 });
 
 const suffix = Date.now().toString(36);
 const jobType = `it.${suffix}`;
@@ -24,11 +26,12 @@ beforeAll(async () => {
   registerHandler(jobTypeFail, async () => {
     throw new Error('boom');
   });
-  // The bookings suites run in parallel workers and enqueue real jobs for
-  // these types. Register no-ops so they complete instead of re-queuing and
-  // starving the queue while this file's single-threaded passes are running.
+  // The bookings + billing suites run in parallel workers and enqueue real
+  // jobs for these types. Register no-ops so they complete instead of
+  // re-queuing and starving the queue while this file's passes are running.
   registerHandler('email.booking_confirmation', async () => {});
   registerHandler('realtime.broadcast', async () => {});
+  registerHandler('email.payment_receipt', async () => {});
 });
 
 afterAll(async () => {
@@ -43,7 +46,7 @@ const handledPayloads: Record<string, unknown>[] = [];
  * worker pass claims a fixed batch. Instead of asserting on a single pass, pump
  * passes until `done()` is satisfied or we exhaust a generous budget.
  */
-async function pumpUntil(done: () => Promise<boolean>, maxPasses = 200): Promise<number> {
+async function pumpUntil(done: () => Promise<boolean>, maxPasses = 400): Promise<number> {
   let processed = 0;
   for (let i = 0; i < maxPasses; i++) {
     processed += await withDb((db) => runWorkerPass(db));

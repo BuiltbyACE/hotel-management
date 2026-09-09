@@ -61,6 +61,18 @@ describe('nextNumber', () => {
     expect(invoice.reference).toBe('INV-000001');
   });
 
+  it('keeps different names on separate counters on the same period', async () => {
+    // regression: the allocator must not clobber a sibling sequence when it
+    // writes (booking + invoice share the property, not the counter).
+    const a = await withTx((tx) => nextNumber(tx, propertyId, 'booking2', { prefix: 'BK2-', period: PERIOD }));
+    const b = await withTx((tx) => nextNumber(tx, propertyId, 'invoice2', { prefix: 'INV2-', period: PERIOD }));
+    const a2 = await withTx((tx) => nextNumber(tx, propertyId, 'booking2', { prefix: 'BK2-', period: PERIOD }));
+
+    expect([a.value, b.value, a2.value]).toEqual([1, 1, 2]);
+    expect(a2.reference).toBe('BK2-000002');
+    expect(b.reference).toBe('INV2-000001');
+  });
+
   it('serializes concurrent allocators without gaps (pseudo-concurrency)', async () => {
     const results = await Promise.all(
       Array.from({ length: 5 }, () =>

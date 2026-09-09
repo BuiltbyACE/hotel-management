@@ -21,6 +21,7 @@ import { enqueue as outbox } from '@/core/jobs';
 import { type Actor } from '@/modules/identity/auth-guard';
 import { resolveOrCreate } from '@/modules/guests/service';
 import { quoteStay, type QuoteInput } from '@/modules/availability/service';
+import { syncInvoicePayments } from '@/modules/billing/service';
 import {
   allocationsForBooking,
   countBookings,
@@ -358,6 +359,7 @@ export async function recordPayment(bookingId: string, input: RecordPaymentInput
     if (!booking) throw AppError.notFound('Booking not found');
     const payment = await _recordPayment(tx, propertyId, bookingId, input, actor, 'payment');
     await updateBookingTotalPaid(tx, bookingId, payment.totalPaid);
+    await syncInvoicePayments(tx, bookingId);
     return toPaymentView(payment.record);
   });
 }
@@ -406,6 +408,7 @@ export async function reversePayment(bookingId: string, paymentId: string, input
 
     const totalPaid = await sumCompletedPayments(tx, bookingId);
     await updateBookingTotalPaid(tx, bookingId, totalPaid);
+    await syncInvoicePayments(tx, bookingId);
 
     await eventBus.emit(BOOKING_EVENTS.paymentReversed, { bookingId, paymentId, by: actor.email });
     return toPaymentView(await findPaymentById(tx, paymentId).then((r) => r!));
