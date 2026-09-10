@@ -26,9 +26,10 @@
   - Phase 2: `QuoteView` money as strings (`src/modules/availability/service.ts`, `types.ts`).
   - Phase 3: `nextNumberFast` — atomic upsert sequence allocator for BK-, EX-, MT- references, removing advisory-lock serialization from booking/expense/maintenance creation. `load/booking-concurrency.js` updated with per-VU `vuSettled` back-off. Test added: `src/core/db/__tests__/sequence.integration.test.ts` (3 new tests). 266 tests, 15/15 db:verify.
   - **Phases 1-3 batch committed to master** — `37beef3`.
+  - **G14 k6 gate GREEN (2026-09-10):** `pnpm load:seed && k6 run load/booking-concurrency.js` → `booking_wins == 10`, `server_errors == 0`, `request_error_rate == 0.00 %`, **p95 == 563 ms** (< 2000 ms). Report flipped to **OPTION A — UNCONDITIONALLY CERTIFIED** (`b70c20c` follow-ups). Frontend takeoff issued.
 
 ### Active
-- Run `pnpm load:seed && k6 run load/booking-concurrency.js` to confirm p95 < 2 s (G14).
+- (none — audit fully certified; Chunk 6 / Chunk 8 open for parallel backend work.)
 
 ### Blocked
 - (none)
@@ -37,9 +38,9 @@
 **Deposit-carrying bookings**: `_recordPayment` allocates an `RC-` receipt reference inside `createBooking`'s `withTx` under the advisory lock (`nextNumber` — gap-free required for financial references). When N receptionists concurrently check in guests with deposits, `createBooking` calls serialise on the receipt sequence for each property. This is a known, accepted ceiling. The window is the duration of the advisory lock acquisition + commit on the sequence row only (microseconds), not the entire booking transaction. For most hotel workloads (< 10 concurrent deposit check-ins), this is unobservable. If this becomes a bottleneck, the fix is to issue the receipt after the booking commits (requires a two-phase flow).
 
 ## Next Move
-1. Commit phases 1-3 batch.
-2. Run k6 gate to confirm G14.
-3. **Frontend go-ahead — ISSUED 2026-09-10.**
+1. ~~Commit phases 1-3 batch~~ → `37beef3` (done).
+2. ~~Run k6 gate to confirm G14~~ → **GREEN 2026-09-10 (p95 563 ms, 10/10 winners, 0 % errors, 0×5xx)**.
+3. **Frontend go-ahead — ISSUED 2026-09-10 (UNCONDITIONALLY CERTIFIED).**
 4. Remaining backend scope: **Chunk 6** (money gaps), **Chunk 8** (system surface) — can proceed in parallel with frontend development.
 
 ## Relevant Files

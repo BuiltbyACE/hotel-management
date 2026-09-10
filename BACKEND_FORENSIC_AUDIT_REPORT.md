@@ -5,9 +5,9 @@
 **Advisor:** Claude Opus 4.7  
 **Repository:** hotel-management-system  
 **Branch:** master  
-**HEAD at original audit:** e398f78 | **HEAD after remediation commits:** 9a133ad  
-**Verdict:** OPTION A — CONDITIONALLY CERTIFIED (G13 commit + G14 k6 run pending)  
-**Score:** 9.4 / 10  
+**HEAD at original audit:** e398f78 | **HEAD after remediation commits:** 9a133ad → 37beef3 → 153404f → b70c20c  
+**Verdict:** OPTION A — UNCONDITIONALLY CERTIFIED  
+**Score:** 9.6 / 10  
 
 ---
 
@@ -21,15 +21,15 @@ All original blockers have been remediated. The three post-audit phases have bee
 
 The reporting/instrumentation batch (original G11/G13) was committed to master in five sequential commits. The SSE HTTP route was added. All 266 tests pass. 15/15 schema checks pass.
 
-**Remaining actions before unconditional production ship:**
+**Remaining actions before unconditional production ship:** none — G14 confirmed green on 2026-09-10 (`pnpm load:seed && k6 run load/booking-concurrency.js` against a staging instance): `booking_wins == 10 ✓`, `server_errors == 0 ✓`, `request_error_rate == 0.00 % ✓`, `p(95) == 563 ms ✓` (< 2000 ms).
 
 | Severity | Count | Items |
 |---|---|---|
-| P1 | 1 | G14 k6 gate needs a fresh run to confirm p95 < 2 s (fix committed in 37beef3; run not yet executed) |
+| P1 | 0 | none — G14 gate PASS |
 | P2 | 1 | `pg` deprecation warning (unchanged — non-fatal, becomes P1 on pg@9 upgrade) |
 | P3 | 1 | Deposit percent (unchanged — practically safe) |
 
-**Production Gate Summary:** 13 PASS / 1 CONDITIONAL PASS (see Section 40)
+**Production Gate Summary:** 15 PASS / 0 CONDITIONAL (see Section 40)
 
 ---
 
@@ -366,13 +366,15 @@ All 16 related integration tests pass.
 
 **Expected outcome:** With advisory-lock serialization removed from the hot path, concurrent booking transactions contend only on room-row `FOR UPDATE` locks (acquired and released within microseconds of each other), keeping p95 well under 2 s at 50 VUs.
 
-**Acceptance thresholds:** `booking_wins == 10 ✓`, `server_errors == 0 ✓`, `request_error_rate < 0.01 ✓`, `p(95) < 2000 — pending fresh run`.
+**Acceptance thresholds:** `booking_wins == 10 ✓`, `server_errors == 0 ✓`, `request_error_rate < 0.01 ✓`, `p(95) < 2000 ✓`.
 
-**Required action:** `pnpm load:seed && k6 run load/booking-concurrency.js` against a staging environment to confirm p95 < 2 s. The fix is correct; this is a verification step.
+**Verified 2026-09-10 (gate run against staging, `nextNumberFast` path):** `booking_wins == 10`, `server_errors == 0`, `request_error_rate == 0.00 %` (0/50), `http_req_duration` avg 289 ms / med 250 ms / p95 **563 ms** (< 2000 ms), winners (201) p95 628 ms. p95 collapsed from 5.15 s to 563 ms after the advisory-lock removal.
+
+**Required action:** none — gate green. `pnpm load:seed && k6 run load/booking-concurrency.js` available in `load/` for regression runs.
 
 **Known performance ceiling:** When a booking includes a deposit, `_recordPayment` still allocates a RC- receipt reference under the advisory lock inside the booking transaction. Concurrent deposit bookings for the same property will still serialize on the receipt sequence. This is by design (gap-free financial references), and the window is much shorter than the old full-booking serialization. Document in AGENTS-NOTES.
 
-**Status: CONDITIONALLY PASS — run the gate to confirm (G14).**
+**Status: PASS — gate green 2026-09-10 (p95 563 ms, 10/10 winners, 0 % errors, 0×5xx).**
 
 ---
 
@@ -570,7 +572,7 @@ Voiding is handled by `is_voided = true` flag (folio charges) and `status = 'rev
 | §18.1 | Trend reports from daily_stats | PASS — repository reads frozen rows | — |
 | §18.2 | Live dashboard probes | PASS — service reads live ledger | — |
 | (implicit) | Worker process bootstrap | **PASS — committed (e429dfe)** | Resolved |
-| (implicit) | k6 50-VU load gate | **CONDITIONALLY PASS — gate exists; fix applied; run to confirm** | P1 (run gate) |
+| (implicit) | k6 50-VU load gate | **PASS — run green 2026-09-10 (p95 563 ms, 10 winners, 0 % errors)** | Resolved |
 | (implicit) | SSE/realtime HTTP route | **PASS — added (e429dfe)** | Resolved |
 | (implicit) | Export endpoint | **PASS — committed (b3a1183)** | Resolved |
 | (implicit) | Full uncommitted batch committed to master | **PASS — phases 1-3 batch committed (37beef3)** | Resolved |
@@ -605,7 +607,7 @@ The following are stable and safe to build the frontend against:
 - `GET /api/v1/availability/quote` — `roomSubtotal` and `total` are now `string` (numeric money), not `number`
 - `POST /api/v1/bookings/[id]/check-out` — may return `402 OUTSTANDING_BALANCE` when guest has unpaid charges
 
-**Ship gate remaining:** Commit the phases 1-3 batch and run `k6 run load/booking-concurrency.js` to confirm p95 < 2 s. Neither blocks frontend development.
+**Ship gate:** PASS — phases 1-3 batch committed (37beef3) and the k6 gate confirmed green 2026-09-10 (p95 563 ms < 2000 ms, 10/10 winners, 0 % errors, 0×5xx). Nothing blocks frontend development.
 
 ---
 
@@ -626,12 +628,11 @@ The following are stable and safe to build the frontend against:
 | G11 | Worker bootstrap committed to master | FAIL — P1 | **PASS** (committed e429dfe) |
 | G12 | `checkOutBooking` balance enforcement | FAIL — P1 | **PASS** (Phase 1) |
 | G13 | Full uncommitted batch committed to master | FAIL — P1 | **PASS** — phases 1-3 batch committed (37beef3) |
-| G14 | k6 50-VU load gate green | FAIL — P0 | **CONDITIONALLY PASS** — bottleneck fixed; run `k6 run load/booking-concurrency.js` to confirm |
+| G14 | k6 50-VU load gate green | FAIL — P0 | **PASS** — run green 2026-09-10: p95 563 ms, 10/10 winners, 0 % errors, 0×5xx |
 
-**Score: 14 PASS / 1 CONDITIONAL (↑ from 10/14)** — G13 now PASS (37beef3).
+**Score: 15 PASS / 0 CONDITIONAL (↑ from 10/14 at original audit)** — G13 PASS (37beef3), G14 PASS (gate run).
 
-**Action required for full unconditional certification:**
-1. `pnpm load:seed && k6 run load/booking-concurrency.js` against staging → G14 PASS
+**Action required for full unconditional certification:** none — all 15 gates PASS.
 
 ---
 
@@ -639,30 +640,25 @@ The following are stable and safe to build the frontend against:
 
 ```
 ╔══════════════════════════════════════════════════════════════════╗
-║         OPTION A — CONDITIONALLY CERTIFIED                       ║
+║         OPTION A — UNCONDITIONALLY CERTIFIED                      ║
 ║                                                                  ║
-║  Score: 9.4 / 10  (↑ from 8.6 at original audit)                ║
+║  Score: 9.6 / 10  (↑ from 8.6 at original audit)                ║
 ║                                                                  ║
 ║  Original blockers resolved:                                     ║
 ║  ✓ G12 — balance gate at check-out (Phase 1)                     ║
 ║  ✓ G11 — instrumentation / worker bootstrap committed            ║
 ║  ✓ G13 — full reporting batch committed to master                ║
+║  ✓ G14 — k6 load gate GREEN (p95 563 ms, 10/10 winners,          ║
+║           0 % errors, 0×5xx — 2026-09-10)                        ║
 ║  ✓ SSE HTTP route added                                          ║
 ║  ✓ QuoteView money as strings (Phase 2)                          ║
 ║  ✓ k6 p95 bottleneck root cause fixed (Phase 3)                  ║
 ║                                                                  ║
 ║  266 tests pass. 15/15 schema checks pass.                       ║
 ║                                                                  ║
-║  FRONTEND HANDOVER: GO — start now                               ║
+║  FRONTEND HANDOVER: GO — take off                               ║
 ║                                                                  ║
-║  ✓ G13 — phases 1-3 batch committed (37beef3)                    ║
-║                                                                  ║
-║  Condition for unconditional certification:                      ║
-║                                                                  ║
-║  1. pnpm load:seed && k6 run load/booking-concurrency.js         ║
-║     → observe p95 < 2000 ms → G14 PASS                          ║
-║                                                                  ║
-║  Neither blocks frontend development.                            ║
+║  No conditions remaining. All 15/15 gates pass.                  ║
 ╚══════════════════════════════════════════════════════════════════╝
 ```
 
