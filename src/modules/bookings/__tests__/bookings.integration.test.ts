@@ -54,6 +54,18 @@ function stay(roomId: string, nights = 2): { arrival: DateOnly; departure: DateO
 const MAIN: Actor = actor('', null);
 const LEDGER: Actor = actor('', null);
 
+/** receptionist that cannot take a payment (e.g. an overridden user) — §12.6. */
+function frontDeskNoCashActor(propertyId: string): Actor {
+  return {
+    id: frontDeskUserId,
+    name: 'Front Desk',
+    email: `front-${randomUUID().slice(0, 6)}@hms.test`,
+    role: 'receptionist',
+    propertyId,
+    permissions: new Set([...resolvePermissions('receptionist', [])].filter((p) => p !== 'payments.record')),
+  };
+}
+
 let mainProperty = '';
 let mainRooms: Record<string, string> = {};
 const mainBookingIds: string[] = [];
@@ -63,6 +75,7 @@ let ledgerRooms: Record<string, string> = {};
 
 let userId = '';
 let ledgerUserId = '';
+let frontDeskUserId = '';
 
 async function seedProperty(
   name: string,
@@ -180,6 +193,27 @@ beforeAll(async () => {
     }
   });
 
+  // A real receptionist user: check-out writes checked_out_by (FK → users).
+  frontDeskUserId = randomUUID();
+  await withTx(async (tx) => {
+    await tx.insert(schema.users).values({
+      id: frontDeskUserId,
+      name: 'Bookings Front Desk',
+      email: `bookings-front-${randomUUID().slice(0, 8)}@hms.test`,
+      role: 'receptionist',
+      status: 'active',
+      mustChangePassword: true,
+      createdBy: null,
+    });
+    await tx.insert(schema.accounts).values({
+      id: randomUUID(),
+      userId: frontDeskUserId,
+      providerId: 'credential',
+      accountId: frontDeskUserId,
+      password: 'not-used-in-tests',
+    });
+  });
+
   await withTx((tx) =>
     tx
       .insert(schema.settings)
@@ -252,6 +286,8 @@ afterAll(async () => {
     // audit trail is append-only, so the user row itself can never be removed.
     await tx.delete(schema.sessions).where(eq(schema.sessions.userId, userId));
     await tx.delete(schema.accounts).where(eq(schema.accounts.userId, userId));
+    await tx.delete(schema.sessions).where(eq(schema.sessions.userId, frontDeskUserId));
+    await tx.delete(schema.accounts).where(eq(schema.accounts.userId, frontDeskUserId));
   });
 });
 
@@ -278,9 +314,9 @@ describe('createBooking', () => {
     expect(created.nights).toBe(2);
     expect(created.arrivalDate).toBe(input.rooms[0]!.arrival);
     expect(created.departureDate).toBe(input.rooms[0]!.departure);
-    expect(created.totalCharges).toBe(quote.total.toFixed(2));
+    expect(created.totalCharges).toBe(quote.total);
     expect(created.totalPaid).toBe('0.00');
-    expect(created.balance).toBe(quote.total.toFixed(2));
+    expect(created.balance).toBe(quote.total);
     expect(created.source).toBe('front_desk');
     expect(created.reference).toMatch(/^BK-/);
     expect(created.guestNameSnapshot).toBe(input.guest.fullName);
@@ -296,7 +332,7 @@ describe('createBooking', () => {
       startDate: input.rooms[0]!.arrival,
       endDate: input.rooms[0]!.departure,
     });
-    expect(allocations[0]!.rateSnapshot).toBe(quote.roomSubtotal.toFixed(2));
+    expect(allocations[0]!.rateSnapshot).toBe(quote.roomSubtotal);
 
     const nights = await withDb((db) =>
       db.select().from(schema.bookingNights).where(eq(schema.bookingNights.bookingId, created.id)),
@@ -413,6 +449,19 @@ describe('lifecycle transitions', () => {
     expect(allocs.every((a) => a.status === 'checked_out')).toBe(true);
   });
 
+  it('blocks check-out on an unpaid folio for an actor who cannot take payment (§12.6)', async () => {
+    const roomId = mainRooms.r201!;
+    const created = await createBooking(booking(roomId), MAIN);
+    mainBookingIds.push(created.id);
+    await checkInBooking(created.id, MAIN);
+
+    // receptionist WITHOUT payments.record (e.g. an overridden user).
+    const frontDeskNoCash = frontDeskNoCashActor(mainProperty);
+    await expect(checkOutBooking(created.id, frontDeskNoCash)).rejects.toSatisfy(
+      code('BALANCE_OUTSTANDING'),
+    );
+  });
+
   it('refuses transitions out of order', async () => {
     const created = await createBooking(booking(mainRooms.r206!), MAIN);
     mainBookingIds.push(created.id);
@@ -455,6 +504,23 @@ describe('deposit policy (§12.4) + payments (§12.3) — LEDGER property', () =
     const override = await createBooking(booking(ledgerRooms.r302!), LEDGER);
     const checkedIn = await checkInBooking(override.id, LEDGER, 'Client confirmed the wire transfer');
     expect(checkedIn.status).toBe('checked_in');
+  });
+
+  it('settling the folio releases the check-out gate (§12.6)', async () => {
+    // LEDGER, not MAIN: the payment row is append-only residue here by design.
+    const created = await createBooking(booking(ledgerRooms.r301!), LEDGER);
+    // Pay in full first: covers the deposit gate regardless of the concurrent
+    // deposit_percent value, and settles the balance for the check-out gate.
+    await recordPayment(
+      created.id,
+      { amount: created.totalCharges, method: 'cash', reference: `CASH-CO-${randomUUID().slice(0, 6)}` },
+      LEDGER,
+    );
+    await checkInBooking(created.id, LEDGER);
+
+    const frontDeskNoCash = frontDeskNoCashActor(ledgerProperty);
+    const out = await checkOutBooking(created.id, frontDeskNoCash);
+    expect(out.status).toBe('checked_out');
   });
 
   it('records a payment, then reverses it into a refund and recomputes the balance', async () => {

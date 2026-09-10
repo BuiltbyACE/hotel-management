@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { withTx } from '@/core/db';
 import { numberSequences } from '@/core/db/infra';
-import { nextNumber } from '@/core/db/sequence';
+import { nextNumber, nextNumberFast } from '@/core/db/sequence';
 import { schema } from '@/core/db';
 
 const PERIOD = '2026-09';
@@ -81,5 +81,30 @@ describe('nextNumber', () => {
     );
     const values = results.map((r) => r.value).sort((x, y) => x - y);
     expect(values).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+describe('nextNumberFast', () => {
+  it('allocates sequential values concurrently via atomic upsert', async () => {
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        nextNumberFast(propertyId, 'fast-concurrent', { prefix: 'FC-', period: PERIOD }),
+      ),
+    );
+    const values = results.map((r) => r.value).sort((x, y) => x - y);
+    expect(values).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('keeps different periods on separate counters', async () => {
+    const a = await nextNumberFast(propertyId, 'fast-period', { prefix: 'FP-', period: '2026' });
+    const b = await nextNumberFast(propertyId, 'fast-period', { prefix: 'FP-', period: '2027' });
+    expect(a.value).toBe(1);
+    expect(b.value).toBe(1);
+  });
+
+  it('formats reference with correct prefix and padding', async () => {
+    const r = await nextNumberFast(propertyId, 'fast-fmt', { prefix: 'BK-', period: PERIOD });
+    expect(r.reference).toMatch(/^BK-\d{6}$/);
+    expect(r.prefix).toBe('BK-');
   });
 });

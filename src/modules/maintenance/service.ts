@@ -14,7 +14,7 @@ import { eq } from 'drizzle-orm';
 import { withDb, withTx } from '@/core/db';
 import { schema } from '@/core/db';
 import { AppError } from '@/core/api';
-import { nextNumber } from '@/core/db/sequence';
+import { nextNumberFast } from '@/core/db/sequence';
 import { today } from '@/core/dates';
 import { eventBus } from '@/core/events';
 import { recordAudit, auditActor } from '@/modules/audit/service';
@@ -57,17 +57,17 @@ export async function reportIssue(input: ReportIssueInput, actor: Actor) {
     throw AppError.badRequest('VALIDATION_ERROR', 'assignedTo is required alongside assignedUserId');
   }
 
+  const { reference } = await nextNumberFast(propertyId, 'maintenance', {
+    prefix: 'MT-',
+    period: today().slice(0, 4),
+  });
+
   const issueId = await withTx(async (tx) => {
     const existingRoom = input.roomId ? await findRoomRow(tx, input.roomId) : null;
     if (input.roomId && !existingRoom) throw AppError.notFound('Room not found');
     if (existingRoom && existingRoom.propertyId !== propertyId) {
       throw AppError.badRequest('VALIDATION_ERROR', 'Room does not belong to this property');
     }
-
-    const { reference } = await nextNumber(tx, propertyId, 'maintenance', {
-      prefix: 'MT-',
-      period: today().slice(0, 4),
-    });
 
     const issue = await insertIssue(tx, {
       propertyId,

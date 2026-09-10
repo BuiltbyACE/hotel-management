@@ -348,9 +348,9 @@ describe('quoteStay', () => {
     );
     expect(quote.nights).toHaveLength(2);
     expect(quote.nights[0]).toMatchObject({ rate: 5000, ruleId: null });
-    expect(quote.roomSubtotal).toBe(10000);
-    expect(quote.taxBreakdown).toEqual([{ name: 'VAT', rate: 16, amount: 1600 }]);
-    expect(quote.total).toBe(11600);
+    expect(quote.roomSubtotal).toBe('10000.00');
+    expect(quote.taxBreakdown).toEqual([{ name: 'VAT', rate: 16, amount: '1600.00' }]);
+    expect(quote.total).toBe('11600.00');
     expect(quote.taxInclusive).toBe(false);
 
     await cleanupQuoteProperty(prop, rt);
@@ -445,8 +445,8 @@ describe('quoteStay', () => {
       }),
     );
     expect(quoted.nights.every((n) => n.rate === 1000)).toBe(true);
-    expect(quoted.roomSubtotal).toBe(2000);
-    expect(quoted.total).toBe(2320);
+    expect(quoted.roomSubtotal).toBe('2000.00');
+    expect(quoted.total).toBe('2320.00');
 
     await cleanupQuoteProperty(prop, rt);
   });

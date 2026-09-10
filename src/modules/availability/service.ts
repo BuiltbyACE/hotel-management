@@ -100,6 +100,9 @@ export interface QuoteInput {
   overrideRate?: number;
 }
 
+/** Money as DB-shaped text: exactly two decimals ("10000.00"). */
+const fmt2 = (value: string): string => M.toDecimal(value).toFixed(2);
+
 /**
  * Price a stay server-side. Resolution order (§10.3):
  * override → best active rate_rule (priority, then specific-over-global)
@@ -145,8 +148,8 @@ export async function quoteStay(db: Db | Tx, input: QuoteInput): Promise<QuoteVi
   const levyAmount = tax.levyRate > 0 ? M.pct(subtotal, tax.levyRate) : M.of(0);
 
   const taxBreakdown = [
-    { name: 'VAT', rate: tax.vatRate, amount: Number(vatAmount) },
-    { name: 'Levy', rate: tax.levyRate, amount: Number(levyAmount) },
+    { name: 'VAT', rate: tax.vatRate, amount: fmt2(vatAmount) },
+    { name: 'Levy', rate: tax.levyRate, amount: fmt2(levyAmount) },
   ].filter((t) => t.rate > 0);
 
   let total: string;
@@ -162,9 +165,9 @@ export async function quoteStay(db: Db | Tx, input: QuoteInput): Promise<QuoteVi
     arrival: input.arrival,
     departure: input.departure,
     nights: nightRows,
-    roomSubtotal: Number(subtotal),
+    roomSubtotal: fmt2(subtotal),
     taxBreakdown,
-    total: Number(total),
+    total: fmt2(total),
     taxInclusive: tax.taxInclusive,
   };
 }

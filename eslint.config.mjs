@@ -58,6 +58,8 @@ const eslintConfig = defineConfig([
     'build/**',
     'next-env.d.ts',
     'node_modules/**',
+    // Standalone k6 harness — not part of the app bundle (imports k6/*).
+    'load/**',
   ]),
 
   // ─── HMS Architecture Rules ───────────────────────────────────────────

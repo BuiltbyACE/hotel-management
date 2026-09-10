@@ -13,7 +13,7 @@
 import { withDb, withTx, type Tx } from '@/core/db';
 import { AppError } from '@/core/api';
 import { translateDbError } from '@/core/db/errors';
-import { nextNumber } from '@/core/db/sequence';
+import { nextNumber, nextNumberFast } from '@/core/db/sequence';
 import { M } from '@/core/money';
 import { today } from '@/core/dates';
 import { eventBus } from '@/core/events';
@@ -130,6 +130,17 @@ async function scopeProperty(actor: Actor): Promise<string> {
 export async function createBooking(input: CreateBookingInput, actor: Actor): Promise<BookingView> {
   const propertyId = await scopeProperty(actor);
 
+  // Allocate the booking reference outside the booking transaction so concurrent
+  // createBooking calls don't queue behind each other's advisory lock.
+  // BK- references are operational; gaps on rollback are acceptable.
+  // Note: on idempotent retries (same idempotencyKey), this allocates and burns
+  // a sequence number before finding the existing booking and returning early.
+  // Gaps are accepted for operational references.
+  const { reference } = await nextNumberFast(propertyId, 'booking', {
+    prefix: 'BK-',
+    period: today().slice(0, 4),
+  });
+
   return withTx(async (tx) => {
     // 1. Idempotency — same key returns the original, never a second booking.
     if (input.idempotencyKey) {
@@ -176,13 +187,8 @@ export async function createBooking(input: CreateBookingInput, actor: Actor): Pr
     const adults = Math.max(...input.rooms.map((r) => r.adults));
     const children = Math.max(...input.rooms.map((r) => r.children));
 
-    // 6. Gap-free reference under an advisory lock scoped to the sequence.
-    const { reference } = await nextNumber(tx, propertyId, 'booking', {
-      prefix: 'BK-',
-      period: today().slice(0, 4),
-    });
-
-    const totalCharges = M.add(...[...quotes.values()].map((q) => q.total.toFixed(2)));
+    // 6. Reference allocated above, outside this transaction.
+    const totalCharges = M.add(...[...quotes.values()].map((q) => q.total));
     const depositAmount = input.payment ? M.of(input.payment.amount) : M.of(0);
 
     // 7. Header (status 'confirmed'; balance is a generated column).
@@ -217,7 +223,7 @@ export async function createBooking(input: CreateBookingInput, actor: Actor): Pr
           startDate: line.arrival,
           endDate: line.departure,
           roomTypeId: lockedById.get(line.roomId)!.roomTypeId,
-          rateSnapshot: quote.roomSubtotal.toFixed(2),
+          rateSnapshot: quote.roomSubtotal,
           adults: line.adults,
           children: line.children,
           createdBy: actor.id,
@@ -333,6 +339,16 @@ export async function checkOutBooking(bookingId: string, actor: Actor): Promise<
     if (!booking) throw AppError.notFound('Booking not found');
     if (booking.status !== 'checked_in') {
       throw AppError.conflict('INVALID_TRANSITION', 'Only in-house bookings can be checked out');
+    }
+    // §12.6 balance gate: an in-house booking with an outstanding balance may
+    // only be checked out by an actor who can also take a payment. Anyone else
+    // must settle the folio first (the payment itself happens via /payments).
+    const outstanding = booking.balance !== null && M.toDecimal(booking.balance).gt(M.of('0'));
+    if (outstanding && !actor.permissions.has('payments.record')) {
+      throw AppError.conflict(
+        'BALANCE_OUTSTANDING',
+        'Booking has an outstanding balance; settle it before check-out',
+      );
     }
 
     const allocations = await setAllocationStatusForBooking(tx, bookingId, 'checked_out');

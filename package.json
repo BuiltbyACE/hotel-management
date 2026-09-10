@@ -15,6 +15,7 @@
     "db:migrate": "dotenv -e .env.local -- tsx scripts/migrate.ts",
     "db:verify": "dotenv -e .env.local -- tsx scripts/verify-schema.ts",
     "db:studio": "drizzle-kit studio",
+    "load:seed": "dotenv -e .env.local -- tsx load/seed.ts",
     "ci": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {

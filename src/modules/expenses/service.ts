@@ -12,7 +12,7 @@ import { eq } from 'drizzle-orm';
 import { withDb, withTx, type Db, type Tx } from '@/core/db';
 import { schema } from '@/core/db';
 import { AppError } from '@/core/api';
-import { nextNumber } from '@/core/db/sequence';
+import { nextNumberFast } from '@/core/db/sequence';
 import { today } from '@/core/dates';
 import { eventBus } from '@/core/events';
 import { recordAudit, auditActor } from '@/modules/audit/service';
@@ -69,6 +69,11 @@ async function resolveCategory(
 export async function createExpense(input: CreateExpenseInput, actor: Actor) {
   const propertyId = requireProperty(actor);
 
+  const { reference } = await nextNumberFast(propertyId, 'expense', {
+    prefix: 'EX-',
+    period: today().slice(0, 4),
+  });
+
   const expenseId = await withTx(async (tx) => {
     if (input.maintenanceIssueId) {
       const issue = await findMaintenanceIssue(tx, input.maintenanceIssueId);
@@ -78,11 +83,6 @@ export async function createExpense(input: CreateExpenseInput, actor: Actor) {
     }
 
     const categoryId = await resolveCategory(tx, input, propertyId);
-
-    const { reference } = await nextNumber(tx, propertyId, 'expense', {
-      prefix: 'EX-',
-      period: today().slice(0, 4),
-    });
 
     const threshold = await readApprovalThreshold(tx);
     const status: ExpenseStatus = threshold > 0 && Number(input.amount) >= threshold ? 'recorded' : 'approved';

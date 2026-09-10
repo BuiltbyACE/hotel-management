@@ -192,7 +192,7 @@ describe('walkIn', () => {
     const input: WalkInInput = {
       guest: { fullName: 'Walk In Wonder', phone: '+254700000000' },
       rooms: [{ roomId: rooms[WALK_IN]!, arrival, departure, adults: 2, children: 0 }],
-      payment: { amount: quote.total.toFixed(2), method: 'cash' },
+      payment: { amount: quote.total, method: 'cash' },
     };
 
     const result = await walkIn(input, ACTOR);
@@ -211,6 +211,6 @@ describe('walkIn', () => {
     expect(roomRow[0]!.condition).toBe('occupied');
 
     const folio = await withDb((db) => db.select().from(schema.bookings).where(and(eq(schema.bookings.id, result.id))));
-    expect(folio[0]!.totalPaid).toBe(quote.total.toFixed(2));
+    expect(folio[0]!.totalPaid).toBe(quote.total);
   });
 });

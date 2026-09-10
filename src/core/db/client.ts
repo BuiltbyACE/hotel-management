@@ -13,7 +13,7 @@ import { schema } from './schema';
 
 const pool = new Pool({
   connectionString: env.DATABASE_URL,
-  max: 20,
+  max: env.DATABASE_POOL_MAX,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
   statement_timeout: 15_000,

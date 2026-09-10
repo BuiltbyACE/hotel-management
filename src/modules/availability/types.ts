@@ -57,22 +57,22 @@ export interface QuoteNightView {
   ruleId: string | null;
 }
 
-/** One tax/levy line on a quote. */
+/** One tax/levy line on a quote. `rate` is a percentage point; money is a string. */
 export interface TaxLineView {
   name: string;
   rate: number;
-  amount: number;
+  amount: string;
 }
 
-/** Server-side pricing for a stay (§10.3). */
+/** Server-side pricing for a stay (§10.3). All money values are 2-dp strings. */
 export interface QuoteView {
   roomTypeId: string;
   roomTypeName: string;
   arrival: string;
   departure: string;
   nights: QuoteNightView[];
-  roomSubtotal: number;
+  roomSubtotal: string;
   taxBreakdown: TaxLineView[];
-  total: number;
+  total: string;
   taxInclusive: boolean;
 }

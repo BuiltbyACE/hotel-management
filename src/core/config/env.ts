@@ -15,6 +15,9 @@ const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   MIGRATION_DATABASE_URL: z.string().min(1, 'MIGRATION_DATABASE_URL is required'),
   REQUIRE_MIGRATIONS: z.coerce.boolean().default(false),
+  // pg pool size. The k6 50-VU load gate exercises deeper concurrency than the
+  // default 20; production can tune this without a code change.
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(20),
 
   // Auth
   BETTER_AUTH_SECRET: z.string().min(32, 'BETTER_AUTH_SECRET must be at least 32 characters'),
