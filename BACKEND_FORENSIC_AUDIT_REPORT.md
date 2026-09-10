@@ -25,8 +25,7 @@ The reporting/instrumentation batch (original G11/G13) was committed to master i
 
 | Severity | Count | Items |
 |---|---|---|
-| P1 | 1 | Phases 1-3 changes + `load/` directory still untracked — commit the batch |
-| P1 | 1 | G14 k6 gate needs a fresh run to confirm p95 < 2 s (fix is in; run not yet executed in this session) |
+| P1 | 1 | G14 k6 gate needs a fresh run to confirm p95 < 2 s (fix committed in 37beef3; run not yet executed) |
 | P2 | 1 | `pg` deprecation warning (unchanged — non-fatal, becomes P1 on pg@9 upgrade) |
 | P3 | 1 | Deposit percent (unchanged — practically safe) |
 
@@ -574,7 +573,7 @@ Voiding is handled by `is_voided = true` flag (folio charges) and `status = 'rev
 | (implicit) | k6 50-VU load gate | **CONDITIONALLY PASS — gate exists; fix applied; run to confirm** | P1 (run gate) |
 | (implicit) | SSE/realtime HTTP route | **PASS — added (e429dfe)** | Resolved |
 | (implicit) | Export endpoint | **PASS — committed (b3a1183)** | Resolved |
-| (implicit) | Full uncommitted batch committed to master | **PARTIAL — original batch committed; phases 1-3 batch pending** | P1 (commit) |
+| (implicit) | Full uncommitted batch committed to master | **PASS — phases 1-3 batch committed (37beef3)** | Resolved |
 | (implicit) | QuoteView money as strings | **PASS — fixed (Phase 2)** | Resolved |
 | (implicit) | BK- booking reference serialization | **PASS — fixed (Phase 3 nextNumberFast)** | Resolved |
 
@@ -626,14 +625,13 @@ The following are stable and safe to build the frontend against:
 | G10 | No IDOR surface | PASS | **PASS** |
 | G11 | Worker bootstrap committed to master | FAIL — P1 | **PASS** (committed e429dfe) |
 | G12 | `checkOutBooking` balance enforcement | FAIL — P1 | **PASS** (Phase 1) |
-| G13 | Full uncommitted batch committed to master | FAIL — P1 | **PARTIAL** — original batch committed; phases 1-3 batch pending commit |
+| G13 | Full uncommitted batch committed to master | FAIL — P1 | **PASS** — phases 1-3 batch committed (37beef3) |
 | G14 | k6 50-VU load gate green | FAIL — P0 | **CONDITIONALLY PASS** — bottleneck fixed; run `k6 run load/booking-concurrency.js` to confirm |
 
-**Score: 13 PASS / 1 CONDITIONAL (↑ from 10/14)**
+**Score: 14 PASS / 1 CONDITIONAL (↑ from 10/14)** — G13 now PASS (37beef3).
 
-**Actions required for full unconditional certification:**
-1. `git add` the phases 1-3 file batch and commit → G13 PASS
-2. `pnpm load:seed && k6 run load/booking-concurrency.js` against staging → G14 PASS
+**Action required for full unconditional certification:**
+1. `pnpm load:seed && k6 run load/booking-concurrency.js` against staging → G14 PASS
 
 ---
 
@@ -657,10 +655,11 @@ The following are stable and safe to build the frontend against:
 ║                                                                  ║
 ║  FRONTEND HANDOVER: GO — start now                               ║
 ║                                                                  ║
-║  Conditions for unconditional certification:                     ║
+║  ✓ G13 — phases 1-3 batch committed (37beef3)                    ║
 ║                                                                  ║
-║  1. git add + commit phases 1-3 batch → G13 PASS                ║
-║  2. pnpm load:seed && k6 run load/booking-concurrency.js         ║
+║  Condition for unconditional certification:                      ║
+║                                                                  ║
+║  1. pnpm load:seed && k6 run load/booking-concurrency.js         ║
 ║     → observe p95 < 2000 ms → G14 PASS                          ║
 ║                                                                  ║
 ║  Neither blocks frontend development.                            ║

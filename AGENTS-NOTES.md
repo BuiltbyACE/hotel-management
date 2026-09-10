@@ -25,9 +25,9 @@
   - Phase 1: `checkOutBooking` balance gate (§12.6). 266/266 tests pass.
   - Phase 2: `QuoteView` money as strings (`src/modules/availability/service.ts`, `types.ts`).
   - Phase 3: `nextNumberFast` — atomic upsert sequence allocator for BK-, EX-, MT- references, removing advisory-lock serialization from booking/expense/maintenance creation. `load/booking-concurrency.js` updated with per-VU `vuSettled` back-off. Test added: `src/core/db/__tests__/sequence.integration.test.ts` (3 new tests). 266 tests, 15/15 db:verify.
+  - **Phases 1-3 batch committed to master** — `37beef3`.
 
 ### Active
-- Commit phases 1-3 batch + `load/` directory to master.
 - Run `pnpm load:seed && k6 run load/booking-concurrency.js` to confirm p95 < 2 s (G14).
 
 ### Blocked
