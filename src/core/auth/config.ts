@@ -80,6 +80,23 @@ export const auth = betterAuth({
         },
       },
     },
+    account: {
+      update: {
+        after: async (account) => {
+          // A credential password change (Better Auth /change-password) clears
+          // the forced-change flag; the now-current password satisfies the gate.
+          // Only credential accounts carry a password. Mirrors identity's
+          // markPasswordChanged stamp exactly; identity's repository is a module
+          // boundary this core file must not import (eslint boundaries rule), so
+          // the identical two-column write lives here.
+          if (account.providerId !== 'credential' || typeof account.password !== 'string') return;
+          await getDb()
+            .update(schema.users)
+            .set({ mustChangePassword: false, passwordChangedAt: new Date() })
+            .where(sql`id = ${account.userId}`);
+        },
+      },
+    },
   },
   session: {
     expiresIn: 60 * 60 * 12, // 12h — one shift

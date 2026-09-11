@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
-    "test": "dotenv -e .env.local -- vitest run",
+    "test": "dotenv -e .env.local -- vitest run --project unit && dotenv -e .env.local -- vitest run --project dom",
     "test:watch": "dotenv -e .env.local -- vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "dotenv -e .env.local -- tsx scripts/migrate.ts",

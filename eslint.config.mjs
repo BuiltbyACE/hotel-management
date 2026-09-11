@@ -167,6 +167,10 @@ const eslintConfig = defineConfig([
             from: { element: { type: 'lib' } },
             disallow: { to: { element: { types: { anyOf: ['module', 'components', 'hooks', 'app'] } } } },
           },
+          {
+            from: { element: { type: 'lib' } },
+            allow: { to: { element: { types: { anyOf: ['lib'] } } } },
+          },
 
           // components may use components, hooks, lib, core (never db), and other surfaces
           {

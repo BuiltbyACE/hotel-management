@@ -1,10 +1,9 @@
 import { redirect } from 'next/navigation';
 import { getServerSession } from '@/core/auth/server-session';
 
-export const dynamic = 'force-dynamic';
-
-export default async function Home() {
+export default async function ChangePasswordLayout({ children }: { children: React.ReactNode }) {
   const user = await getServerSession();
   if (!user) redirect('/login');
-  redirect(user.mustChangePassword ? '/change-password' : '/dashboard');
+  if (!user.mustChangePassword) redirect('/dashboard');
+  return <>{children}</>;
 }
